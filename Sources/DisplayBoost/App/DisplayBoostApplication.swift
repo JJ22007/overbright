@@ -46,6 +46,7 @@ enum DisplayBoostApplication {
         var completionStarted = false
         var testedWake = false
         var testedProfileRecovery = false
+        let adjustedBacklight: Float = 0.7
 
         controller.onSnapshot = { snapshot in
             print(
@@ -58,6 +59,22 @@ enum DisplayBoostApplication {
             if !testedWake {
                 testedWake = true
                 DispatchQueue.main.async {
+                    for value: Float in [0.9795198, adjustedBacklight] {
+                        guard brightnessService.write(value, displayID: displayID) else {
+                            controller.shutdown()
+                            _ = brightnessService.write(baselineBrightness, displayID: displayID)
+                            Darwin.exit(2)
+                        }
+                        controller.displayParametersDidChange()
+                        guard controller.state == .active,
+                              let actual = brightnessService.read(displayID: displayID),
+                              abs(actual - value) < 0.01 else {
+                            controller.shutdown()
+                            _ = brightnessService.write(baselineBrightness, displayID: displayID)
+                            fputs("SELFTEST FAIL: native brightness change disabled boost or was overwritten\n", stderr)
+                            Darwin.exit(2)
+                        }
+                    }
                     controller.brightnessKeyControlDidBecomeUnavailable()
                     guard controller.state == .active else {
                         controller.shutdown()
@@ -110,10 +127,15 @@ enum DisplayBoostApplication {
                 let baselineWasRestored = restoredEndpoint.map {
                     abs($0 - baselineEndpoint) < 0.025
                 } ?? false
-                let backlightWasRaised = activeBrightness.map { $0 >= 0.99 } ?? false
-                let backlightWasRestored = restoredBrightness.map {
-                    abs($0 - baselineBrightness) < 0.01
+                let backlightWasRaised = activeBrightness.map {
+                    abs($0 - adjustedBacklight) < 0.01
                 } ?? false
+                let backlightWasRestored = restoredBrightness.map {
+                    abs($0 - adjustedBacklight) < 0.01
+                } ?? false
+                // The test intentionally adjusted the backlight; leave the user's
+                // original hardware setting intact regardless of assertion outcome.
+                _ = brightnessService.write(baselineBrightness, displayID: displayID)
 
                 if boostWasApplied && baselineWasRestored &&
                     backlightWasRaised && backlightWasRestored &&
@@ -145,6 +167,7 @@ enum DisplayBoostApplication {
             )
             source.setEventHandler {
                 controller.shutdown()
+                _ = brightnessService.write(baselineBrightness, displayID: displayID)
                 application.terminate(nil)
             }
             source.resume()
@@ -157,6 +180,7 @@ enum DisplayBoostApplication {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
             controller.shutdown()
+            _ = brightnessService.write(baselineBrightness, displayID: displayID)
             controller.setLevel(previousLevel)
             fputs("SELFTEST FAIL: boost did not become active\n", stderr)
             Darwin.exit(2)

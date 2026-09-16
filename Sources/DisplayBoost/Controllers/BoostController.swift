@@ -29,13 +29,13 @@ final class BoostController {
     private var savedNativeBrightness: Float?
     private var activeDisplayID: CGDirectDisplayID?
     private var activeColorProfileIdentity: ColorProfileIdentity?
-    private var backlightPinnedForBoost = false
+    private var backlightMonitoringEnabled = false
     private var gammaRecoveryHandled = false
     private var engagementGeneration = 0
     private var resumePending = false
-    private var resumeBrightnessBaseline: Float?
     private var integrityTimer: Timer?
     private var backlightObservation = BacklightObservation()
+    private var lastObservedBacklight: Float?
 
     private(set) var state: BoostState = .off
     private(set) var level: BoostLevel
@@ -90,11 +90,10 @@ final class BoostController {
         }
     }
 
-    func enable() {
+    func enable(raiseBacklight: Bool = true) {
         if wantedActive && state == .active { return }
         backlightObservation.reset()
         resumePending = false
-        resumeBrightnessBaseline = nil
         if level.factor <= BoostLevel.minimum {
             let firstBoostStep = BrightnessKeyStep.nextBoostLevel(
                 from: BoostLevel.minimum,
@@ -160,11 +159,12 @@ final class BoostController {
             return
         }
 
-        guard nativeBrightness.write(1, displayID: displayID) else {
+        guard !raiseBacklight || nativeBrightness.write(1, displayID: displayID) else {
             failActivation("无法设置系统背光亮度")
             return
         }
-        backlightPinnedForBoost = true
+        backlightMonitoringEnabled = true
+        lastObservedBacklight = nativeBrightness.read(displayID: displayID)
         guard edrTrigger.start(on: screen) else {
             failActivation("无法创建 EDR 图层")
             return
@@ -176,7 +176,6 @@ final class BoostController {
     @discardableResult
     func disable() -> Bool {
         resumePending = false
-        resumeBrightnessBaseline = nil
         wantedActive = false
         engagementGeneration += 1
         let restored = restoreDisplay(restoreNativeBrightness: true)
@@ -284,13 +283,12 @@ final class BoostController {
         }
 
         if resumePending {
-            cancelPendingResumeIfBrightnessChanged()
             return
         }
 
-        guard backlightPinnedForBoost,
+        guard backlightMonitoringEnabled,
               let displayID = activeDisplayID else { return }
-        disableIfNativeBrightnessChanged(displayID: displayID)
+        _ = verifyNativeBrightnessForBoost(displayID: displayID)
     }
 
     func suspend(for reason: BoostSuspensionReason) {
@@ -302,9 +300,6 @@ final class BoostController {
         let restored = restoreDisplay(restoreNativeBrightness: true)
         if !restored {
             wantedActive = false
-            resumeBrightnessBaseline = nil
-        } else if let displayID = DisplayLookup.builtInScreen?.displayBoostID {
-            resumeBrightnessBaseline = nativeBrightness.read(displayID: displayID)
         }
         setState(
             restored
@@ -331,16 +326,14 @@ final class BoostController {
                   self.wantedActive,
                   self.suspensionReasons.isEmpty,
                   self.engagementGeneration == generation else { return }
-            guard !self.cancelPendingResumeIfBrightnessChanged() else { return }
             self.resumePending = false
-            self.resumeBrightnessBaseline = nil
-            self.enable()
+            // Recovery must not overwrite ambient-light or Control Center changes.
+            self.enable(raiseBacklight: false)
         }
     }
 
     func shutdown() {
         resumePending = false
-        resumeBrightnessBaseline = nil
         wantedActive = false
         engagementGeneration += 1
         restoreDisplay(restoreNativeBrightness: true)
@@ -366,9 +359,10 @@ final class BoostController {
         }
 
         let shouldResume = nativeBrightness.read(displayID: displayID).map {
-            $0 >= Self.nativeBrightnessMaximumThreshold
+            $0.isFinite && (0...1).contains($0)
         } ?? false
-        let originalRestoreBrightness = savedNativeBrightness
+        _ = verifyNativeBrightnessForBoost(displayID: displayID)
+        guard wantedActive else { return }
         if let currentBrightness = nativeBrightness.read(displayID: displayID) {
             if currentBrightness < Self.nativeBrightnessMaximumThreshold {
                 // A color-profile change must use the ColorSync reset below rather than
@@ -392,8 +386,7 @@ final class BoostController {
         wantedActive = false
         activeColorProfileIdentity = nil
         resumePending = false
-        resumeBrightnessBaseline = nil
-        backlightPinnedForBoost = false
+        backlightMonitoringEnabled = false
         engagementGeneration += 1
 
         GammaTableService.restoreColorSyncDefaults()
@@ -423,7 +416,6 @@ final class BoostController {
                 // Rebuild from the NEW ColorSync profile, never reuse the old LUT.
                 // Keep the original backlight so a later explicit disable restores it.
                 wantedActive = true
-                resumeBrightnessBaseline = originalRestoreBrightness
                 setState(.engaging)
                 if suspensionReasons.isEmpty { scheduleResume() }
             } else {
@@ -483,7 +475,6 @@ final class BoostController {
 
     private func failActivation(_ message: String) {
         resumePending = false
-        resumeBrightnessBaseline = nil
         wantedActive = false
         engagementGeneration += 1
         let restored = restoreDisplay(restoreNativeBrightness: true)
@@ -498,7 +489,7 @@ final class BoostController {
 
     @discardableResult
     private func restoreDisplay(restoreNativeBrightness: Bool) -> Bool {
-        backlightPinnedForBoost = false
+        backlightMonitoringEnabled = false
         let gammaRestored = restoreGammaWithFallback()
         edrTrigger.stop()
 
@@ -597,30 +588,31 @@ final class BoostController {
         return min(calibratedFactor, max(1, currentEDR))
     }
 
-    @discardableResult
-    private func disableIfNativeBrightnessChanged(
-        displayID: CGDirectDisplayID
-    ) -> Bool {
-        _ = verifyNativeBrightnessForBoost(displayID: displayID)
-        return !wantedActive
-    }
-
     private func verifyNativeBrightnessForBoost(
         displayID: CGDirectDisplayID
     ) -> Bool {
         let currentBrightness = nativeBrightness.read(displayID: displayID)
         switch backlightObservation.observe(currentBrightness, now: ProcessInfo.processInfo.systemUptime) {
         case .ready:
+            if let currentBrightness {
+                if let previous = lastObservedBacklight,
+                   abs(currentBrightness - previous) > 0.001 {
+                    // Follow native brightness WITHOUT writing it or disabling EDR.
+                    // Preserve this newest setting on quit, sleep, and recovery.
+                    savedNativeBrightness = currentBrightness
+                    defaults.set(currentBrightness, forKey: DefaultsKey.savedNativeBrightness)
+                    defaults.set("following native backlight \(currentBrightness)", forKey: "lastBacklightEvent")
+                    logger.info("Following native backlight: \(currentBrightness, privacy: .public); boost retained")
+                    lastObservedBacklight = currentBrightness
+                } else if lastObservedBacklight == nil {
+                    lastObservedBacklight = currentBrightness
+                }
+            }
             return true
         case .pending:
             return false
         case .unavailable:
             stopBoostWithoutChangingNativeBrightness("无法确认系统背光亮度，增亮已关闭")
-            return false
-        case .yield:
-            guard let currentBrightness else { return false }
-            defaults.set("native-backlight changed to \(currentBrightness)", forKey: "lastStopReason")
-            endBoostPreservingNativeBrightness(currentBrightness)
             return false
         }
     }
@@ -638,9 +630,8 @@ final class BoostController {
 
     private func stopBoostWithoutChangingNativeBrightness(_ message: String) {
         resumePending = false
-        resumeBrightnessBaseline = nil
         wantedActive = false
-        backlightPinnedForBoost = false
+        backlightMonitoringEnabled = false
         engagementGeneration += 1
 
         // The live backlight value is unknown, so discard the old restore target before
@@ -669,28 +660,21 @@ final class BoostController {
     }
 
     private func endBoostAtNativeMaximum() {
-        endBoostPreservingNativeBrightness(1)
+        // The native level may have changed since activation (ambient light, etc.).
+        // Leaving the boost range must not brighten it back to 100%.
+        guard let displayID = activeDisplayID,
+              let current = nativeBrightness.read(displayID: displayID) else {
+            stopBoostWithoutChangingNativeBrightness("无法读取系统亮度")
+            return
+        }
+        endBoostPreservingNativeBrightness(current)
     }
 
     private func cancelPendingResume() {
         resumePending = false
-        resumeBrightnessBaseline = nil
         wantedActive = false
         engagementGeneration += 1
         setState(.off)
-    }
-
-    @discardableResult
-    private func cancelPendingResumeIfBrightnessChanged() -> Bool {
-        guard resumePending else { return false }
-        guard let baseline = resumeBrightnessBaseline,
-              let displayID = DisplayLookup.builtInScreen?.displayBoostID,
-              let current = nativeBrightness.read(displayID: displayID),
-              abs(current - baseline) < 0.005 else {
-            cancelPendingResume()
-            return true
-        }
-        return false
     }
 
     private func restoreGammaBeforeRetrigger() -> Bool {
