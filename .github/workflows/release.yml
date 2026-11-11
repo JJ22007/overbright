@@ -18,7 +18,7 @@ concurrency:
 jobs:
   release:
     if: github.ref == 'refs/heads/main'
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Test and package both architectures
