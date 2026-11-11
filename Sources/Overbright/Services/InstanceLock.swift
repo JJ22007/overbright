@@ -17,7 +17,7 @@ final class InstanceLock {
         }
 
         let directory = applicationSupport.appendingPathComponent(
-            "Display Boost",
+            "Overbright",
             isDirectory: true
         )
         do {

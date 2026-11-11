@@ -1,96 +1,217 @@
-# Display Boost
+<h1 align="center">Overbright</h1>
 
-A small, local-only macOS menu bar utility that opens the built-in Liquid Retina
-XDR display's EDR headroom and applies a bounded gamma-table boost.
+<p align="center">
+  <b>Take your MacBook's XDR display past 100%.</b><br>
+  A menu bar app you can script, configure in one file, and reshape with an AI agent.
+</p>
 
-## Compatibility & installation
+<p align="center">
+  <a href="README.zh-CN.md">简体中文</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#make-it-yours">Customize</a> ·
+  <a href="#drive-it-from-scripts-and-agents">CLI</a> ·
+  <a href="#build-your-own">Build your own</a>
+</p>
 
-[Download the latest universal app](https://github.com/JJ22007/display-boost-macos/releases/latest).
+Overbright opens the extra brightness that a Liquid Retina XDR display normally keeps for HDR video, and lets you use it for everything: up to 160% of standard brightness, from the menu bar, from F1/F2, or from a command. It is about 3,000 lines of Swift with no dependencies and no Xcode project. Settings sit in one JSON file, and anything the file can't do is a short edit away, by you or by your AI coding agent.
 
-macOS 13 or later. The universal app contains native arm64 and x86_64 binaries.
-Copy `Display Boost.app` from `Display-Boost-universal.zip` into Applications on
-each Mac. Enable Accessibility for that copy to use F1/F2.
+## Features
 
-Boost is enabled according to the built-in display's live EDR capability, not a
-Mac model whitelist. Liquid Retina XDR MacBook Pro displays are the intended
-hardware. A non-EDR panel shows an unsupported state and keeps native brightness
-keys working. Intel compatibility means the app can run, not that an older LCD
-can acquire XDR brightness. Percentage is a requested boost, not measured nits;
-the applied gain is limited by current EDR headroom and a conservative curve.
-See Apple's [EDR capability documentation](https://developer.apple.com/documentation/appkit/nsscreen/maximumpotentialextendeddynamicrangecolorcomponentvalue).
+- **Brightness past 100%.** A slider from 100% to 160%. The boost is limited by the headroom macOS reports at that moment, so it never asks the panel for more than it offers.
+- **F1/F2 keep going.** At full native brightness, F2 continues into the XDR range and F1 walks back down, with no jump at the boundary.
+- **Stays out of the system's way.** Auto-brightness, Control Center and sleep keep working. Overbright follows them instead of fighting them, and puts everything back when you turn it off or quit.
+- **One config file, hot reloaded.** Save the file and the change applies within a second or two. Mistakes show up in the menu instead of breaking the app.
+- **Presets.** Name the levels you use ("Shade", "Outdoors") and pick them from the menu or the command line.
+- **A command line for scripts and agents.** `overbright set 140`, `overbright status --json`. Every command reports the real result and a meaningful exit code.
+- **English and 简体中文**, following the system language.
 
-The current download is locally/ad-hoc signed, not Apple notarized. macOS may
-require Open Anyway in Privacy & Security after the first launch attempt, and
-Accessibility may need reauthorization after an update. For distribution with a
-Developer ID certificate, set `DISPLAYBOOST_SIGN_IDENTITY` when packaging; Apple
-notarization is a separate step. Do not disable Gatekeeper system-wide.
+## Requirements
 
-## Reliability
+- macOS 13 or later, Apple Silicon or Intel.
+- A built-in display with EDR headroom. In practice that means a MacBook Pro with a Liquid Retina XDR display. On other displays the app says so and leaves brightness alone. Overbright cannot make an ordinary LCD brighter.
 
-Version 1.3 follows native backlight changes without turning off EDR or forcing
-the backlight back to maximum. Ambient-light adjustments and Control Center
-changes no longer cancel boost. Recovery after sleep/profile changes also uses
-the current native level. This preserves the boost setting, not constant physical
-brightness: system dimming and thermal/EDR limits still apply. The latest native
-change is recorded in `lastBacklightEvent`. Keyboard-listener interruptions do
-not disable menu-selected boost; persistently unreadable backlight still stops safely.
+## Install
 
-Version 1.2 resumes after sleep and safely re-baselines after a changed color
-profile. Identical-profile notifications are ignored; error states can be retried
-from the slider. User or system backlight reductions still take precedence so
-F1 and automatic brightness do not fight the app. A fresh launch starts disabled.
-The status menu is intentionally small; hover an error status for details.
+### Download
 
-CI builds and packages both architectures and runs hardware-independent tests.
-The opt-in `--hardware-self-test` also exercises nested sleep/wake, duplicate
-profile notifications, injected changed-profile recovery and apply/restore on a
-real screen. These tests do not constitute testing every MacBook Pro model.
-State changes are logged under `local.jjxu.DisplayBoost` / `Recovery`, with the
-latest state also stored in `lastBoostState` and `lastBoostStateAt` preferences.
+Get `Overbright-universal.zip` from the [latest release](https://github.com/JJ22007/overbright/releases/latest), unzip it, and move `Overbright.app` into Applications.
 
-## Usage
+The download is ad-hoc signed, not notarized by Apple. The first time you open it macOS will block it: go to System Settings → Privacy & Security and choose **Open Anyway**. You do not need to turn Gatekeeper off.
 
-1. Open **Display Boost.app**.
-2. Click the sun icon in the menu bar.
-3. Choose **开启增亮**, or move the slider to enable automatically, then adjust
-   **增亮强度**.
-4. Choose **恢复标准亮度** or quit the app to restore the original display state.
+### Build from source
 
-F1/F2 keep their normal macOS behaviour from 0–100%. At the top of the native
-range, F2 continues into the XDR range in 6.25% steps up to 160%; F1 walks back
-through the same range. macOS requires one-time Accessibility permission so the
-app can consume those brightness-key events instead of adjusting the backlight a
-second time. Until permission is granted, the keys pass through to macOS unchanged;
-if the native backlight moves while boost is active, Display Boost follows that
-new system brightness while keeping the extra boost enabled. F1/F2 with permission
-adjust the extra boost first, then return to native control without a brightness jump.
+Needs the Swift compiler. If you have never installed it, run `xcode-select --install` first.
 
-The 1600-nit specification is a localized HDR peak, not a sustainable full-screen
-brightness. Higher brightness uses more power, produces more heat, and can increase
-normal backlight wear.
-
-Enabling the boost temporarily moves the native backlight to 100%; the 100–160%
-slider controls the extra EDR/gamma mapping above the normal SDR range. The app
-restores the original backlight setting unless a newer native adjustment was
-observed; in that case it preserves the newer setting on disable, sleep, or quit.
-
-Do not run it at the same time as BetterDisplay, BrightIntosh, BrightXDR, Lunar,
-f.lux, or another utility that changes the display gamma table. This app refuses to
-enable when it detects an already-boosted gamma endpoint. Gamma remapping can also
-compress or clip highlight detail in HDR photos and video, so restore standard
-brightness for color-critical or HDR mastering work.
-
-## Build
-
-```sh
-./script/test_logic.sh
-./script/build_and_run.sh --verify
-./script/package_release.sh
+```bash
+git clone https://github.com/JJ22007/overbright.git
+cd overbright
+bash scripts/install.sh
 ```
 
-## Releases
+This runs the tests, builds the app, installs `Overbright.app` into `~/Applications`, links the `overbright` command into `~/.local/bin`, and launches it.
 
-Increment `CFBundleShortVersionString` and `CFBundleVersion` in
-`Support/Info.plist`, update `RELEASE_NOTES.md`, then push to `main`. The release
-workflow tests and builds both architectures and publishes a versioned ZIP and
-SHA-256 checksum to GitHub Releases. Existing releases are never overwritten.
+### Planning to rebuild? Run this once
+
+macOS ties the Accessibility permission (used for F1/F2) to the app's code signature. A plain source build is ad-hoc signed, so every rebuild looks like a new app: the permission stops working, even though the switch in System Settings may still look on.
+
+```bash
+bash scripts/setup-signing.sh
+```
+
+The script creates a self-signed certificate in your login keychain, used only to sign your own builds, then rebuilds and installs. Grant the permission one more time and it survives every rebuild after that. If you have an Apple Developer ID, use `SIGN_ID="Developer ID Application: You" bash scripts/install.sh` instead.
+
+## Use
+
+1. Open **Overbright**. A sun icon appears in the menu bar.
+2. Click it and choose **Turn Boost On**, or just drag the slider past 100%.
+3. Choose **Restore Standard Brightness**, or quit, to put the display back exactly as it was.
+
+**F1 and F2.** From 0 to 100% the keys behave as they always have. At 100%, F2 continues upward in 6.25% steps and F1 comes back down. Hold Option+Shift for quarter steps, as elsewhere in macOS. This needs the Accessibility permission, because Overbright has to catch the key before macOS does: choose **Allow F1 / F2…** in the menu. Without the permission the keys keep their normal behaviour and the menu still works.
+
+## Make it yours
+
+The config lives at `~/.config/overbright/config.json`. Open it from the menu with **Edit Config File…**. Write only what you want to change; everything else keeps its default.
+
+```json
+{
+  "maxLevel": 140,
+  "showPercentage": true,
+  "presets": [
+    { "name": "Shade", "level": 115 },
+    { "name": "Outdoors", "level": 140 }
+  ]
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `maxLevel` | `160` | The highest level the slider, the keys and the CLI can reach, from 101 to 160. Lower it if you want a gentler ceiling. |
+| `keyStep` | `6.25` | Percent added per F1/F2 press above 100%. |
+| `fineKeyStep` | `1.5625` | Percent added per press with Option+Shift held. |
+| `brightnessKeys` | `true` | Let F1/F2 continue past 100%. Set `false` to use only the menu and the CLI; the app then never asks for Accessibility. |
+| `enableOnLaunch` | `false` | Turn the boost on when the app starts, at the last level you used. |
+| `showPercentage` | `false` | Show the current percentage next to the menu bar icon while boosted. |
+| `language` | `"auto"` | `"auto"` follows the system; `"en"` or `"zh"` forces one. |
+| `presets` | `[]` | Named levels: `name` and `level` (100 to 160). They appear in the menu and work with `overbright preset`. |
+
+**When you get it wrong.** The menu shows **Config Problems** with the exact entry at fault. That entry falls back to its default and the rest keeps working. If the file is not valid JSON at all, the previous settings stay in effect until you fix it. You can also check a file from the terminal:
+
+```bash
+overbright check ~/.config/overbright/config.json
+```
+
+### Examples
+
+Copy from [`examples/`](examples):
+
+| File | For |
+|---|---|
+| [`minimal.json`](examples/minimal.json) | A gentler ceiling of 130% |
+| [`presets.json`](examples/presets.json) | Three named levels and the percentage in the menu bar |
+| [`fine-steps.json`](examples/fine-steps.json) | Smaller F1/F2 steps for precise control |
+| [`menu-only.json`](examples/menu-only.json) | No key interception and no Accessibility permission |
+| [`always-on.json`](examples/always-on.json) | Boost from launch, capped at 140% |
+
+## Drive it from scripts and agents
+
+`scripts/install.sh` links the command to `~/.local/bin/overbright`. If you installed from the download, the same binary is at `/Applications/Overbright.app/Contents/MacOS/Overbright`.
+
+```bash
+overbright status            # off 125%
+overbright set 140           # on 140%
+overbright up                # one key step brighter
+overbright preset outdoors   # match a preset by name or prefix
+overbright off               # back to standard brightness
+overbright status --json
+```
+
+```json
+{
+  "brightnessKeys" : "on",
+  "configProblems" : [],
+  "edrHeadroom" : 1.26,
+  "level" : 125,
+  "maxLevel" : 160,
+  "potentialEdrHeadroom" : 16,
+  "presets" : [],
+  "state" : "on",
+  "supported" : true,
+  "version" : "2.0"
+}
+```
+
+The app must be running; the command talks to it and waits for the display to actually change before it answers. `state` is `off`, `engaging`, `on` or `unavailable`. Add `--json` to any command to get the status object back.
+
+| Exit code | Meaning |
+|---|---|
+| `0` | Done. |
+| `1` | The app refused, or the boost is unavailable (the reason is on stderr). |
+| `2` | The app is not running, or the command is malformed. |
+
+Some things this makes easy:
+
+```bash
+# Brighter while on battery outdoors, standard at your desk
+overbright preset outdoors
+
+# A Shortcuts or Raycast action
+~/.local/bin/overbright toggle
+
+# Let an agent check before it changes anything
+overbright status --json | jq -e '.supported'
+```
+
+## Build your own
+
+When the config isn't enough, change the code. The project is written to be easy for people and coding agents to read.
+
+1. **Fork** the repo and clone your fork.
+2. Open it with your coding agent (Claude Code, Cursor, Codex, and so on). [`AGENTS.md`](AGENTS.md) already explains the layout, how to build, what can be verified without the hardware, and what must never be changed carelessly.
+3. **Say what you want in plain words.** For example:
+   - "Add a config option that turns the boost off automatically when the battery drops below 20%."
+   - "Add a global hotkey that toggles the boost."
+   - "Show the level as a small bar in the menu bar instead of a number."
+   - "Add a `schedule` option: boost only between 10:00 and 16:00."
+   - "Translate the interface to Japanese."
+4. Run `bash scripts/install.sh` and try it.
+
+Prefer to do it by hand? Each file has one job:
+
+| File | Job | Look here to… |
+|---|---|---|
+| [`Models/Config.swift`](Sources/Overbright/Models/Config.swift) | Reading and validating the config | add a config option |
+| [`Models/BoostLevel.swift`](Sources/Overbright/Models/BoostLevel.swift) | Level limits and the brightness curve | change how percent maps to brightness |
+| [`Models/BrightnessKeyStep.swift`](Sources/Overbright/Models/BrightnessKeyStep.swift) | F1/F2 step arithmetic | change how the keys step |
+| [`App/CLI.swift`](Sources/Overbright/App/CLI.swift) | The `overbright` command and its server | add a command |
+| [`Views/StatusItemController.swift`](Sources/Overbright/Views/StatusItemController.swift) | Menu bar icon and menu | change the menu |
+| [`Support/L10n.swift`](Sources/Overbright/Support/L10n.swift) | English and Chinese text | add a language |
+| [`App/AppDelegate.swift`](Sources/Overbright/App/AppDelegate.swift) | Start-up, sleep/wake, applying the config | react to a system event |
+| [`Controllers/BoostController.swift`](Sources/Overbright/Controllers/BoostController.swift) | The state machine that applies and restores the boost | rarely, and carefully |
+| [`Services/`](Sources/Overbright/Services) | Gamma table, EDR layer, backlight, key tap | rarely |
+
+## How it works
+
+macOS gives an XDR display brightness "headroom" above standard white only while something on screen is HDR. Overbright keeps a tiny, invisible HDR layer on the built-in display so that headroom opens, then scales the display's gamma table so ordinary content uses it. The percentage is a request: the applied gain follows a conservative curve and is always capped by the headroom macOS reports right now, which shrinks in bright rooms and when the display is warm.
+
+Before changing anything, Overbright records the display's original state, and it writes a recovery marker so that even after a crash or a forced quit the next launch restores standard brightness. Reading and setting the system backlight goes through macOS's DisplayServices framework, a private interface that a future macOS version could change.
+
+## Limits and cautions
+
+- **The percentage is not a measurement.** 160% is a requested boost, not 1,600 nits. Peak HDR brightness is not sustainable across the full screen.
+- **Brighter means warmer.** Higher brightness uses more power and makes more heat. macOS may dim the display on its own; Overbright does not override that.
+- **Don't run two of these at once.** BetterDisplay, BrightIntosh, Lunar, f.lux and similar tools also change the gamma table. Overbright refuses to turn on when it detects an already boosted table.
+- **Not for color-critical work.** Scaling the gamma table can clip highlight detail in HDR photos and video. Restore standard brightness first.
+- **Built-in display only.** External displays are left alone.
+- **Tested on a limited set of Macs.** CI runs the hardware-independent tests and builds both architectures. It cannot test a real panel.
+
+## Coming from Display Boost?
+
+Overbright is the new name of Display Boost from version 2.0. The app has a new bundle identifier, so quit and delete `Display Boost.app`, then allow Overbright under Accessibility once. The old repository address redirects here.
+
+## Credits
+
+Using EDR headroom together with the gamma table is a technique known from tools such as [BrightIntosh](https://github.com/niklasr22/BrightIntosh) and [BetterDisplay](https://github.com/waydabber/BetterDisplay). If you want a mature tool with many more features, use one of those. Overbright has a different goal: to be small enough that you can make it entirely your own.
+
+## License
+
+[MIT](LICENSE)

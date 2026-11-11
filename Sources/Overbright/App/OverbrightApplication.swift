@@ -2,9 +2,17 @@ import AppKit
 import Darwin
 
 @main
-enum DisplayBoostApplication {
+enum OverbrightApplication {
     @MainActor
     static func main() {
+        // `overbright status`, `overbright set 140` and friends: act as the
+        // command line client and exit without starting a second app.
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        if let first = arguments.first,
+           CLI.commands.contains(first) || !first.hasPrefix("-") {
+            Darwin.exit(CLI.run(arguments))
+        }
+
         let application = NSApplication.shared
 
         if CommandLine.arguments.contains("--hardware-self-test") {
@@ -24,13 +32,14 @@ enum DisplayBoostApplication {
         application.setActivationPolicy(.accessory)
 
         guard let instanceLock = InstanceLock.acquire() else {
-            fputs("SELFTEST FAIL: Display Boost is already running\n", stderr)
+            fputs("SELFTEST FAIL: Overbright is already running\n", stderr)
             Darwin.exit(2)
         }
 
+        ConfigStore.shared.load()
         let controller = BoostController()
         let brightnessService = NativeBrightnessService()
-        guard let displayID = DisplayLookup.builtInScreen?.displayBoostID,
+        guard let displayID = DisplayLookup.builtInScreen?.overbrightID,
               let baselineEndpoint = GammaTableService.readEndpoint(
                 displayID: displayID
               ),
@@ -41,7 +50,7 @@ enum DisplayBoostApplication {
 
         let previousLevel = controller.level.factor
         let requestedTestLevel = Float(
-            ProcessInfo.processInfo.environment["DISPLAYBOOST_SELF_TEST_LEVEL"] ?? ""
+            ProcessInfo.processInfo.environment["OVERBRIGHT_SELF_TEST_LEVEL"] ?? ""
         ) ?? 1.05
         var completionStarted = false
         var testedWake = false

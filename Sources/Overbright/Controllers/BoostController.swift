@@ -22,7 +22,7 @@ final class BoostController {
     private let edrTrigger = EDRTriggerService()
     private let nativeBrightness = NativeBrightnessService()
     private let defaults = UserDefaults.standard
-    private let logger = Logger(subsystem: "local.jjxu.DisplayBoost", category: "Recovery")
+    private let logger = Logger(subsystem: AppInfo.bundleID, category: "Recovery")
 
     private var wantedActive = false
     private var suspensionReasons: Set<BoostSuspensionReason> = []
@@ -57,7 +57,7 @@ final class BoostController {
             defaults.set(true, forKey: DefaultsKey.recoveryRequired)
             defaults.synchronize()
             if !recoverInterruptedSession() {
-                state = .unavailable("等待内置显示器恢复标准亮度")
+                state = .unavailable(L10n.tr("Waiting for the built-in display to return to standard brightness", "等待内置显示器恢复标准亮度"))
             }
         }
 
@@ -80,6 +80,17 @@ final class BoostController {
                 screen?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1
             )
         )
+    }
+
+    /// True while the user wants the boost, including while it is engaging.
+    var isWanted: Bool { wantedActive }
+
+    /// Call after `BoostLevel.cap` changes so a stored level above the new
+    /// ceiling comes down to it.
+    func capDidChange() {
+        if level.factor > BoostLevel.cap {
+            setLevel(level.factor)
+        }
     }
 
     func toggle() {
@@ -113,20 +124,20 @@ final class BoostController {
         if defaults.bool(forKey: DefaultsKey.recoveryRequired) {
             guard completePendingRecovery() else {
                 wantedActive = false
-                setState(.unavailable("等待内置显示器恢复标准亮度"))
+                setState(.unavailable(L10n.tr("Waiting for the built-in display to return to standard brightness", "等待内置显示器恢复标准亮度")))
                 return
             }
         }
 
         guard let screen = DisplayLookup.builtInScreen,
-              let displayID = screen.displayBoostID else {
+              let displayID = screen.overbrightID else {
             wantedActive = false
-            setState(.unavailable("未找到内置显示器"))
+            setState(.unavailable(L10n.tr("No built-in display found", "未找到内置显示器")))
             return
         }
         guard screen.maximumPotentialExtendedDynamicRangeColorComponentValue > 1.05 else {
             wantedActive = false
-            setState(.unavailable("内置屏幕不支持 XDR/EDR"))
+            setState(.unavailable(L10n.tr("The built-in display does not support XDR/EDR", "内置屏幕不支持 XDR/EDR")))
             return
         }
 
@@ -135,7 +146,7 @@ final class BoostController {
 
         if let endpoint = GammaTableService.readEndpoint(displayID: displayID),
            endpoint > 1.05 {
-            failActivation("检测到其他 Gamma 增亮，请先关闭它")
+            failActivation(L10n.tr("Another gamma brightness tool is active; turn it off first", "检测到其他 Gamma 增亮，请先关闭它"))
             return
         }
 
@@ -144,7 +155,7 @@ final class BoostController {
 
         if savedNativeBrightness == nil {
             guard let currentBrightness = nativeBrightness.read(displayID: displayID) else {
-                failActivation("无法读取系统背光亮度")
+                failActivation(L10n.tr("Could not read the system backlight level", "无法读取系统背光亮度"))
                 return
             }
             savedNativeBrightness = currentBrightness
@@ -155,18 +166,18 @@ final class BoostController {
         }
 
         guard gamma.captureBaseline(displayID: displayID) else {
-            failActivation("无法读取屏幕颜色表")
+            failActivation(L10n.tr("Could not read the display gamma table", "无法读取屏幕颜色表"))
             return
         }
 
         guard !raiseBacklight || nativeBrightness.write(1, displayID: displayID) else {
-            failActivation("无法设置系统背光亮度")
+            failActivation(L10n.tr("Could not set the system backlight level", "无法设置系统背光亮度"))
             return
         }
         backlightMonitoringEnabled = true
         lastObservedBacklight = nativeBrightness.read(displayID: displayID)
         guard edrTrigger.start(on: screen) else {
-            failActivation("无法创建 EDR 图层")
+            failActivation(L10n.tr("Could not create the EDR layer", "无法创建 EDR 图层"))
             return
         }
 
@@ -182,7 +193,7 @@ final class BoostController {
         setState(
             restored
                 ? .off
-                : .unavailable("标准亮度恢复待处理，请保持应用运行")
+                : .unavailable(L10n.tr("Standard brightness is not restored yet; keep the app running", "标准亮度恢复待处理，请保持应用运行"))
         )
         return restored
     }
@@ -252,7 +263,7 @@ final class BoostController {
         guard !wantedActive,
               direction == .increase,
               snapshot.potentialEDRHeadroom > 1.05,
-              let displayID = DisplayLookup.builtInScreen?.displayBoostID,
+              let displayID = DisplayLookup.builtInScreen?.overbrightID,
               let currentBrightness = nativeBrightness.read(displayID: displayID),
               currentBrightness >= 0.995 else {
             return false
@@ -304,7 +315,7 @@ final class BoostController {
         setState(
             restored
                 ? .engaging
-                : .unavailable("等待内置显示器恢复标准亮度")
+                : .unavailable(L10n.tr("Waiting for the built-in display to return to standard brightness", "等待内置显示器恢复标准亮度"))
         )
     }
 
@@ -345,7 +356,7 @@ final class BoostController {
 
     func handleColorProfileChange(on screen: NSScreen, identity currentIdentity: ColorProfileIdentity) {
         guard wantedActive,
-              let displayID = screen.displayBoostID,
+              let displayID = screen.overbrightID,
               displayID == activeDisplayID else {
             return
         }
@@ -422,7 +433,7 @@ final class BoostController {
                 setState(.off)
             }
         } else {
-            setState(.unavailable("颜色配置已改变；标准亮度恢复待处理"))
+            setState(.unavailable(L10n.tr("The color profile changed; standard brightness is not restored yet", "颜色配置已改变；标准亮度恢复待处理")))
         }
     }
 
@@ -430,7 +441,7 @@ final class BoostController {
         guard generation == engagementGeneration, wantedActive else { return }
         guard let displayID = activeDisplayID,
               let screen = DisplayLookup.screen(displayID: displayID) else {
-            failActivation("内置显示器配置已改变")
+            failActivation(L10n.tr("The built-in display configuration changed", "内置显示器配置已改变"))
             return
         }
         let backlightReady = verifyNativeBrightnessForBoost(displayID: displayID)
@@ -443,7 +454,7 @@ final class BoostController {
         }
 
         guard attemptsRemaining > 0 else {
-            failActivation("macOS 未能进入 EDR 模式")
+            failActivation(L10n.tr("macOS did not enter EDR mode", "macOS 未能进入 EDR 模式"))
             return
         }
 
@@ -467,7 +478,7 @@ final class BoostController {
         let safeFactor = targetFactor(for: screen)
 
         guard gamma.apply(factor: safeFactor) else {
-            failActivation("无法应用屏幕增亮")
+            failActivation(L10n.tr("Could not apply the boost", "无法应用屏幕增亮"))
             return
         }
         setState(.active)
@@ -482,7 +493,10 @@ final class BoostController {
             .unavailable(
                 restored
                     ? message
-                    : "\(message)；标准亮度恢复仍待完成"
+                    : message + L10n.tr(
+                        "; standard brightness is not restored yet",
+                        "；标准亮度恢复仍待完成"
+                      )
             )
         )
     }
@@ -540,7 +554,7 @@ final class BoostController {
         }
         guard let displayID = activeDisplayID,
               let screen = DisplayLookup.screen(displayID: displayID) else {
-            failActivation("内置显示器配置已改变")
+            failActivation(L10n.tr("The built-in display configuration changed", "内置显示器配置已改变"))
             return
         }
 
@@ -548,7 +562,7 @@ final class BoostController {
 
         if screen.maximumExtendedDynamicRangeColorComponentValue <= 1.05 {
             guard restoreGammaBeforeRetrigger() else {
-                failActivation("无法安全恢复屏幕颜色表")
+                failActivation(L10n.tr("Could not safely restore the display gamma table", "无法安全恢复屏幕颜色表"))
                 return
             }
             edrTrigger.stop()
@@ -556,12 +570,12 @@ final class BoostController {
             engagementGeneration += 1
             let generation = engagementGeneration
             guard gamma.captureBaseline(displayID: displayID) else {
-                failActivation("无法重新读取屏幕颜色表")
+                failActivation(L10n.tr("Could not re-read the display gamma table", "无法重新读取屏幕颜色表"))
                 return
             }
             gammaRecoveryHandled = false
             guard edrTrigger.start(on: screen) else {
-                failActivation("无法恢复 EDR 模式")
+                failActivation(L10n.tr("Could not re-enter EDR mode", "无法恢复 EDR 模式"))
                 return
             }
             setState(.engaging)
@@ -612,7 +626,7 @@ final class BoostController {
         case .pending:
             return false
         case .unavailable:
-            stopBoostWithoutChangingNativeBrightness("无法确认系统背光亮度，增亮已关闭")
+            stopBoostWithoutChangingNativeBrightness(L10n.tr("Could not confirm the system backlight level; boost turned off", "无法确认系统背光亮度，增亮已关闭"))
             return false
         }
     }
@@ -655,7 +669,10 @@ final class BoostController {
         setState(
             gammaRestored
                 ? .unavailable(message)
-                : .unavailable("\(message)；屏幕颜色恢复待处理")
+                : .unavailable(message + L10n.tr(
+                    "; display color is not restored yet",
+                    "；屏幕颜色恢复待处理"
+                  ))
         )
     }
 
@@ -664,7 +681,7 @@ final class BoostController {
         // Leaving the boost range must not brighten it back to 100%.
         guard let displayID = activeDisplayID,
               let current = nativeBrightness.read(displayID: displayID) else {
-            stopBoostWithoutChangingNativeBrightness("无法读取系统亮度")
+            stopBoostWithoutChangingNativeBrightness(L10n.tr("Could not read the system brightness", "无法读取系统亮度"))
             return
         }
         endBoostPreservingNativeBrightness(current)
@@ -688,7 +705,7 @@ final class BoostController {
         }
 
         if !gamma.baselineDisplayIsOnline {
-            if let currentDisplayID = DisplayLookup.builtInScreen?.displayBoostID,
+            if let currentDisplayID = DisplayLookup.builtInScreen?.overbrightID,
                CGDisplayIsOnline(currentDisplayID) != 0,
                gamma.restore(to: currentDisplayID) {
                 activeDisplayID = currentDisplayID
@@ -706,7 +723,7 @@ final class BoostController {
     }
 
     private func restoreNativeBrightnessValue(_ value: Float) -> Bool {
-        if let currentDisplayID = DisplayLookup.builtInScreen?.displayBoostID,
+        if let currentDisplayID = DisplayLookup.builtInScreen?.overbrightID,
            nativeBrightness.write(value, displayID: currentDisplayID) {
             return true
         }
@@ -732,8 +749,8 @@ final class BoostController {
             if state != .off {
                 setState(.off)
             }
-        } else if state != .unavailable("等待内置显示器恢复标准亮度") {
-            setState(.unavailable("等待内置显示器恢复标准亮度"))
+        } else if state != .unavailable(L10n.tr("Waiting for the built-in display to return to standard brightness", "等待内置显示器恢复标准亮度")) {
+            setState(.unavailable(L10n.tr("Waiting for the built-in display to return to standard brightness", "等待内置显示器恢复标准亮度")))
         }
     }
 
