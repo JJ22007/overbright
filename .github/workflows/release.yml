@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Test and package both architectures
-        run: ./script/package_release.sh
+        run: ./scripts/package_release.sh
       - name: Publish versioned download
         env:
           GH_TOKEN: ${{ github.token }}
@@ -35,9 +35,9 @@ jobs:
             echo "Release $tag already exists. Increment the app version to publish a new release."
             exit 1
           fi
-          shasum -a 256 outputs/Display-Boost-universal.zip > outputs/SHA256SUMS.txt
+          shasum -a 256 outputs/Overbright-universal.zip > outputs/SHA256SUMS.txt
           gh release create "$tag" \
-            outputs/Display-Boost-universal.zip outputs/SHA256SUMS.txt \
+            outputs/Overbright-universal.zip outputs/SHA256SUMS.txt \
             --target "$GITHUB_SHA" \
-            --title "Display Boost $version" \
+            --title "Overbright $version" \
             --notes-file RELEASE_NOTES.md
