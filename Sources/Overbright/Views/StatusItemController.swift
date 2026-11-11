@@ -6,7 +6,9 @@ import AppKit
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let boostController: BoostController
     private let brightnessKeyService: BrightnessKeyService
+    private let externalDisplays: ExternalDisplayManager
     private let statusItem: NSStatusItem
+    private var externalRows: [CGDirectDisplayID: (slider: NSSlider, label: NSTextField)] = [:]
     private let menu = NSMenu()
 
     private var toggleItem = NSMenuItem()
@@ -18,10 +20,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     init(
         boostController: BoostController,
-        brightnessKeyService: BrightnessKeyService
+        brightnessKeyService: BrightnessKeyService,
+        externalDisplays: ExternalDisplayManager
     ) {
         self.boostController = boostController
         self.brightnessKeyService = brightnessKeyService
+        self.externalDisplays = externalDisplays
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
 
@@ -40,6 +44,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         brightnessKeyService.start()
         render(boostController.snapshot)
+        // Catch changes made with the displays' own buttons.
+        externalDisplays.refresh()
     }
 
     /// Call after the config changes.
@@ -90,6 +96,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(brightnessKeysItem)
 
         menu.addItem(.separator())
+        addExternalDisplayItems(config: config)
 
         if !problems.isEmpty {
             let problemsItem = NSMenuItem(
@@ -134,6 +141,90 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(quitItem)
 
         render(boostController.snapshot)
+    }
+
+    /// One slider per external display. Rebuilt whenever a display is plugged
+    /// in or removed, so a new display shows up on its own.
+    private func addExternalDisplayItems(config: Config) {
+        externalRows = [:]
+        let displays = externalDisplays.displays
+        guard config.externalDisplays, !displays.isEmpty else { return }
+
+        for display in displays {
+            let item = NSMenuItem()
+            let container = NSView(frame: NSRect(x: 0, y: 0, width: 270, height: 62))
+
+            let suffix: String
+            switch display.control {
+            case .ddc, .native: suffix = ""
+            case .software: suffix = L10n.tr(" · software", " · 软件调暗")
+            }
+            let caption = NSTextField(labelWithString: display.name + suffix)
+            caption.font = .systemFont(ofSize: 12, weight: .medium)
+            caption.lineBreakMode = .byTruncatingTail
+            caption.frame = NSRect(x: 14, y: 38, width: 180, height: 17)
+            container.addSubview(caption)
+
+            let label = NSTextField(labelWithString: "")
+            label.alignment = .right
+            label.textColor = .secondaryLabelColor
+            label.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            label.frame = NSRect(x: 190, y: 38, width: 66, height: 17)
+            container.addSubview(label)
+
+            let slider = NSSlider()
+            slider.minValue = display.minimum
+            slider.maxValue = 100
+            slider.isContinuous = true
+            slider.target = self
+            slider.action = #selector(externalSliderChanged(_:))
+            slider.tag = Int(display.id)
+            slider.frame = NSRect(x: 12, y: 8, width: 246, height: 24)
+            slider.setAccessibilityLabel(L10n.tr("\(display.name) brightness", "\(display.name) 亮度"))
+            container.addSubview(slider)
+
+            container.toolTip = switch display.control {
+            case .ddc: L10n.tr(
+                "Controlled over DDC/CI, like the display's own buttons." +
+                    (display.minimum < 0 ? " Below 0% the backlight stays at its minimum and the picture is darkened further." : ""),
+                "通过 DDC/CI 控制，等同于显示器自身的按键。" +
+                    (display.minimum < 0 ? "低于 0% 时背光保持最低，再用软件把画面进一步调暗。" : ""))
+            case .native: L10n.tr(
+                "Controlled by macOS." +
+                    (display.minimum < 0 ? " Below 0% the picture is darkened further." : ""),
+                "由 macOS 控制。" +
+                    (display.minimum < 0 ? "低于 0% 时再用软件把画面进一步调暗。" : ""))
+            case .software: L10n.tr(
+                "This display does not accept DDC/CI, so the picture is dimmed instead. It can only get darker.",
+                "此显示器不支持 DDC/CI，改为调暗画面，只能调暗不能增亮。")
+            }
+
+            item.view = container
+            menu.addItem(item)
+            externalRows[display.id] = (slider, label)
+            renderExternal(display)
+        }
+
+        if config.externalKeys, config.brightnessKeys {
+            let hint = NSMenuItem(
+                title: L10n.tr("⌃F1 / ⌃F2 adjust external displays", "⌃F1 / ⌃F2 调节副屏亮度"),
+                action: nil,
+                keyEquivalent: ""
+            )
+            hint.isEnabled = false
+            menu.addItem(hint)
+        }
+        menu.addItem(.separator())
+    }
+
+    func renderExternal(_ display: ExternalDisplay) {
+        guard let row = externalRows[display.id] else { return }
+        row.slider.doubleValue = display.level
+        row.label.stringValue = ExternalBrightness.label(display.level)
+    }
+
+    @objc private func externalSliderChanged(_ sender: NSSlider) {
+        externalDisplays.setLevel(sender.doubleValue, for: CGDirectDisplayID(sender.tag))
     }
 
     private func makeSliderItem() -> NSMenuItem {

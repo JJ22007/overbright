@@ -1,5 +1,7 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
+import OSLog
 
 @MainActor
 final class BrightnessKeyService {
@@ -8,9 +10,19 @@ final class BrightnessKeyService {
         _ fineGrained: Bool
     ) -> Bool
 
-    private static let systemDefinedEventMask = CGEventMask(1 << 14)
+    /// Brightness media keys arrive as system-defined events. Control+F1/F2 can
+    /// also arrive as plain F1/F2 key codes, depending on the keyboard and the
+    /// "Use F1, F2, etc. keys as standard function keys" setting, so key-down
+    /// and key-up are watched too. Only Control+F1/F2 is ever acted on; every
+    /// other key passes through untouched.
+    private static let eventMask = CGEventMask(1 << 14) |
+        CGEventMask(1 << CGEventType.keyDown.rawValue) |
+        CGEventMask(1 << CGEventType.keyUp.rawValue)
+    private let logger = Logger(subsystem: AppInfo.bundleID, category: "Keys")
 
     private let handler: Handler
+    /// Control+F1/F2. Return false to let macOS have the key.
+    var externalHandler: Handler?
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var keySequence = BrightnessKeySequence()
@@ -80,7 +92,7 @@ final class BrightnessKeyService {
             tap: .cghidEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: Self.systemDefinedEventMask,
+            eventsOfInterest: Self.eventMask,
             callback: callback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
@@ -137,6 +149,10 @@ final class BrightnessKeyService {
             return passThrough
         }
 
+        if eventType == .keyDown || eventType == .keyUp {
+            return processFunctionKey(eventType: eventType, event: event)
+        }
+
         guard let systemEvent = NSEvent(cgEvent: event),
               let mediaKey = BrightnessMediaKeyEvent.decode(
                 subtype: Int(systemEvent.subtype.rawValue),
@@ -157,6 +173,12 @@ final class BrightnessKeyService {
             .intersection(.deviceIndependentFlagsMask)
         let optionHeld = modifiers.contains(.option)
         let shiftHeld = modifiers.contains(.shift)
+        if modifiers.contains(.control) {
+            let handled = externalHandler?(mediaKey.direction, optionHeld && shiftHeld) ?? false
+            logger.info("Control+brightness key \(mediaKey.direction == .increase ? "up" : "down", privacy: .public) handled=\(handled)")
+            keySequence.recordDown(code: mediaKey.keyCode, consumed: handled)
+            return handled ? nil : passThrough
+        }
         if optionHeld && !shiftHeld {
             keySequence.recordDown(code: mediaKey.keyCode, consumed: false)
             return passThrough
@@ -169,5 +191,33 @@ final class BrightnessKeyService {
         }
 
         return passThrough
+    }
+
+    /// Control+F1/F2 delivered as function-key codes rather than media keys.
+    private func processFunctionKey(eventType: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        let passThrough = Unmanaged.passUnretained(event)
+        let keyCode = Int(event.getIntegerValueField(.keyboardEventKeycode))
+        let direction: BrightnessKeyDirection
+        switch keyCode {
+        case kVK_F1: direction = .decrease
+        case kVK_F2: direction = .increase
+        default: return passThrough
+        }
+        // Distinct from the media key codes (2 and 3) so the two paths never
+        // swallow each other's key-up.
+        let sequenceCode = 1000 + keyCode
+
+        if eventType == .keyUp {
+            return keySequence.consumeRelease(code: sequenceCode) ? nil : passThrough
+        }
+        let flags = event.flags
+        guard flags.contains(.maskControl), !flags.contains(.maskCommand) else {
+            return passThrough
+        }
+        let fine = flags.contains(.maskAlternate) && flags.contains(.maskShift)
+        let handled = externalHandler?(direction, fine) ?? false
+        logger.info("Control+F\(keyCode == kVK_F1 ? 1 : 2, privacy: .public) key code handled=\(handled)")
+        keySequence.recordDown(code: sequenceCode, consumed: handled)
+        return handled ? nil : passThrough
     }
 }

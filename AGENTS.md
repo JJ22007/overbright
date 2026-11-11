@@ -26,6 +26,7 @@ bash scripts/setup-signing.sh    # one-time: stable signing identity (the user r
 ## What you cannot verify yourself
 
 - **Real brightness.** Whether the panel actually got brighter can only be judged by a person looking at an XDR display. `overbright status --json` tells you the state machine reached `on` and what headroom macOS reports; it does not measure light. Say this plainly instead of claiming a visual change was tested.
+- **External displays.** `overbright displays` and `overbright display <name> <percent>` reply after the DDC write finished, and the level can be read back independently. That is a real check of DDC, but only on a display that is actually connected; CI has none.
 - **F1/F2.** Intercepting brightness keys needs the Accessibility permission, which only the user can grant in System Settings. The grant is tied to the code signature: with an ad-hoc signature every rebuild invalidates it while the switch can still look on. `scripts/setup-signing.sh` fixes this by creating a local self-signed identity; it writes to the user's login keychain, so ask the user to run it rather than running it yourself. Never try to grant the permission yourself.
 - **Other Mac models.** CI has no XDR panel.
 
@@ -44,14 +45,18 @@ All sources are in `Sources/Overbright/`.
 | `Models/BrightnessKeyStep.swift` | Next level for an F1/F2 press |
 | `Models/BrightnessMediaKeyEvent.swift` | Decoding the system brightness-key events |
 | `Models/BacklightObservation.swift` | Tolerating brief backlight read failures |
+| `Models/DDC.swift` | DDC/CI request and reply bytes; `ExternalBrightness` steps and scaling |
 | `Models/ColorProfileIdentity.swift` | Telling a real color-profile change from a transient notification |
 | `Controllers/BoostController.swift` | The state machine: enable, disable, suspend/resume, recovery |
 | `Services/GammaTableService.swift` | Reading, scaling and restoring the gamma table |
 | `Services/EDRTriggerService.swift` | The invisible HDR layer that opens EDR headroom |
+| `Services/DDCService.swift` | IOAVService I2C transport (Apple Silicon, loaded with dlsym) and endpoint discovery |
+| `Services/ExternalDisplayManager.swift` | External displays: detection, DDC/macOS/software choice, coalesced writes, software dimming |
 | `Services/NativeBrightnessService.swift` | Reading and writing the system backlight level |
 | `Services/BrightnessKeyService.swift` | The event tap for F1/F2; the only code that needs Accessibility |
 | `Services/ConfigStore.swift` | Loads `config.json`, creates it on first run, hot reloads |
 | `Services/InstanceLock.swift` | One running copy at a time |
+| `Views/BrightnessHUD.swift` | The on-screen indicator for external display changes |
 | `Views/StatusItemController.swift` | Menu bar icon and menu, rebuilt on every config change |
 | `App/CLI.swift` | The `overbright` command (client) and `CommandServer` (inside the app) |
 | `App/AppDelegate.swift` | Start-up, sleep/wake/session observers, applying the config |
@@ -63,6 +68,8 @@ All sources are in `Sources/Overbright/`.
 
 - **Always restore.** Every path that changes the gamma table or the backlight must have a path that puts it back, including on quit, SIGTERM, sleep, a color-profile change and a crash (the `recoveryRequired` marker in `UserDefaults`). If you add a way to turn the boost on, check how it turns off in each of those cases.
 - **Never fight the system.** If macOS or the user lowers the backlight, follow it. Do not write the backlight back to 100% from a timer. Do not disable auto-brightness.
+- **External displays: brightness only.** DDC/CI can change many monitor settings (input, power, factory reset). Overbright writes VCP 0x10 and nothing else. Keep it that way unless the user asks for a specific feature, and never send a write you have not read back first on real hardware.
+- **Never call `CGDisplayRestoreColorSyncSettings` for an external display.** It resets every display, including the built-in boost. `SoftwareDimmer` restores from its own baseline.
 - **Never exceed the reported headroom.** The gamma factor is capped by `maximumExtendedDynamicRangeColorComponentValue` at the moment of applying. `BoostLevel.maximum` (160%) and `BoostCalibration` are the calibrated safety envelope: do not raise them to make the screen "brighter". A user-facing ceiling belongs in `maxLevel`, which can only lower it.
 - **The config file is the single source of truth for settings** (`~/.config/overbright/config.json`). Do not add a second settings store. `UserDefaults` holds only runtime state: the last level and the recovery markers.
 - **Config must stay forgiving.** Every field is optional. A bad entry produces a warning in `Config.warnings` and falls back to its default; it must never crash the app or block the rest of the file. Unreadable JSON keeps the previous settings.

@@ -268,6 +268,65 @@ expect(
 )
 BrightnessKeyStep.coarse = BrightnessKeyStep.defaultCoarse
 
+// MARK: DDC/CI packets
+
+expect(DDC.getRequest(code: 0x10) == [0x82, 0x01, 0x10, 0xAC], "get-brightness request matches the DDC/CI spec")
+expect(DDC.setRequest(code: 0x10, value: 70) == [0x84, 0x03, 0x10, 0x00, 0x46, 0xEE], "set-brightness request carries value and checksum")
+expect(DDC.setRequest(code: 0x10, value: 0x0123)[3...4] == [0x01, 0x23], "16-bit values are sent high byte first")
+// Captured from a Dell P2723DE at 100 of 100.
+let dellReply: [UInt8] = [0x6E, 0x88, 0x02, 0x00, 0x10, 0x00, 0x00, 0x64, 0x00, 0x64, 0xA4, 0x5F]
+expect(DDC.parseReply(dellReply, code: 0x10).map { $0.current == 100 && $0.maximum == 100 } ?? false,
+       "a real display reply parses")
+var corrupted = dellReply
+corrupted[9] = 0x46
+expect(DDC.parseReply(corrupted, code: 0x10) == nil, "a reply with a bad checksum is rejected")
+var unsupported = dellReply
+unsupported[3] = 0x01
+expect(DDC.parseReply(unsupported, code: 0x10) == nil, "an unsupported-feature reply is rejected")
+expect(DDC.parseReply(dellReply, code: 0x12) == nil, "a reply for another feature is rejected")
+expect(DDC.parseReply([UInt8](repeating: 0, count: 12), code: 0x10) == nil, "silence is not a reading")
+
+// MARK: External brightness
+
+expect(ExternalBrightness.next(from: 100, direction: .decrease, step: 6.25) == 93.75, "Control+F1 steps down from 100")
+expect(ExternalBrightness.next(from: 6.25, direction: .decrease, step: 6.25) == 0, "Control+F1 reaches exactly 0")
+expect(ExternalBrightness.next(from: 0, direction: .decrease, step: 6.25) == 0, "Control+F1 stops at 0")
+expect(ExternalBrightness.next(from: 70, direction: .increase, step: 6.25) == 75, "Control+F2 snaps an off-grid level to the next step")
+expect(ExternalBrightness.next(from: 98, direction: .increase, step: 6.25) == 100, "Control+F2 stops at 100")
+expect(ExternalBrightness.ddcValue(level: 70, maximum: 100) == 70, "percent maps to a 0-100 display")
+expect(ExternalBrightness.ddcValue(level: 50, maximum: 255) == 128, "percent maps to a display with its own scale")
+expect(ExternalBrightness.level(ddcValue: 128, maximum: 255) > 50.1, "a display's scale maps back to percent")
+expect(ExternalBrightness.level(ddcValue: 5, maximum: 0) == 100, "a zero maximum does not divide by zero")
+expect(ExternalBrightness.softwareFactor(level: 0) == 0.1, "software dimming never goes fully black")
+expect(ExternalBrightness.softwareFactor(level: 100) == 1, "software dimming at 100 changes nothing")
+
+// MARK: Extra dimming below the backlight's minimum
+
+let deepest = ExternalBrightness.minimum(software: false, extraDimming: true)
+expect(deepest == -90, "extra dimming reaches -90")
+expect(ExternalBrightness.minimum(software: false, extraDimming: false) == 0, "without extra dimming the floor is 0")
+expect(ExternalBrightness.minimum(software: true, extraDimming: true) == 10, "software-only displays keep their 10 percent floor")
+expect(ExternalBrightness.split(60) == (60, 1), "above 0 only the backlight changes")
+expect(ExternalBrightness.split(0) == (0, 1), "at 0 the backlight is at its minimum and the picture untouched")
+expect(ExternalBrightness.split(-40) == (0, 0.6), "below 0 the backlight stays at 0 and the picture is darkened")
+expect(ExternalBrightness.split(-500).factor == 0.1, "extra dimming never goes fully black")
+expect(ExternalBrightness.next(from: 0, direction: .decrease, step: 6.25, minimum: deepest) == -6.25,
+       "Control+F1 continues past 0 into extra dimming")
+expect(ExternalBrightness.next(from: -87.5, direction: .decrease, step: 6.25, minimum: deepest) == -90,
+       "Control+F1 stops at the deepest level")
+expect(ExternalBrightness.next(from: -6.25, direction: .increase, step: 6.25, minimum: deepest) == 0,
+       "Control+F2 comes back to exactly 0")
+expect(ExternalBrightness.next(from: 0, direction: .decrease, step: 6.25) == 0,
+       "without extra dimming Control+F1 stops at 0")
+expect(ExternalBrightness.label(-40) == "\u{2212}40%" && ExternalBrightness.label(60) == "60%",
+       "levels below 0 are labelled with a minus sign")
+expect(!parsed(#"{"extraDimming": false}"#).extraDimming, "extra dimming can be turned off")
+
+let externalOptions = parsed(#"{"externalDisplays": false, "externalKeys": false, "showHUD": false}"#)
+expect(!externalOptions.externalDisplays && !externalOptions.externalKeys && !externalOptions.showHUD &&
+       externalOptions.warnings.isEmpty, "external display options decode")
+expect(Config().externalDisplays && Config().externalKeys && Config().showHUD, "external displays are on by default")
+
 if failureCount > 0 {
     exit(1)
 }
