@@ -7,8 +7,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - run: ./script/package_release.sh
+      - run: ./scripts/package_release.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: Display-Boost-universal
-          path: outputs/Display-Boost-universal.zip
+          name: Overbright-universal
+          path: outputs/Overbright-universal.zip
