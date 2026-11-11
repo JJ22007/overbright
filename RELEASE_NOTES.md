@@ -7,6 +7,10 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 - Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
 - To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
+## 2.4
+
+- **Indicator restyled after the macOS volume indicator.** A larger glass capsule with a sun and 16 thin, evenly spaced dashes, and no percentage.
+
 ## 2.3
 
 - **One brightness scale, one indicator.** F1/F2 move along a single 0–160% scale on the built-in display: the backlight up to 100%, the boost above. Overbright shows one indicator for all of it (top centre, 16 evenly spaced segments) instead of macOS's below 100% and its own above.

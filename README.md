@@ -81,7 +81,7 @@ How each display is controlled is decided automatically:
 
 DDC/CI needs Apple Silicon. On an Intel Mac every external display uses software dimming. Some monitors have DDC/CI switched off in their own on-screen menu; turn it on there.
 
-**F1 and F2: one scale from 0 to 160%.** The built-in display's brightness is one scale. 0–100% is the backlight, the same 16 steps as macOS's own keys. Above 100% the backlight stays at full and the boost takes over, up to 160% (`maxLevel`). Every press moves 6.25%; hold Option+Shift for quarter steps. Overbright shows one indicator for the whole scale at the top of the screen: a sun and 16 evenly spaced segments of 10% each, the last six being the boost.
+**F1 and F2: one scale from 0 to 160%.** The built-in display's brightness is one scale. 0–100% is the backlight, the same 16 steps as macOS's own keys. Above 100% the backlight stays at full and the boost takes over, up to 160% (`maxLevel`). Every press moves 6.25%; hold Option+Shift for quarter steps. Overbright shows one indicator for the whole scale at the top of the screen: a sun and 16 thin, evenly spaced dashes of 10% each, styled like the macOS volume indicator; the last six are the boost.
 
 Handling the keys needs the Accessibility permission, because Overbright has to catch them before macOS does: choose **Allow F1 / F2…** in the menu. Without it, macOS keeps the keys and its own indicator, and the boost is in the menu.
 

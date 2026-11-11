@@ -4,17 +4,17 @@ import AppKit
 /// 0–160% scale. It takes the place of macOS's own indicator whenever
 /// Overbright handles F1/F2, so there is never a second one.
 ///
-/// Styled after the macOS 27.2 indicator: a glass capsule at the top centre of
-/// the screen with a sun and a 16-segment bar. Each segment is 10% of the
-/// scale, evenly spaced; the last six are the boost above 100%.
+/// Styled after the macOS 27.2 volume indicator: a glass capsule at the top
+/// centre of the screen with a sun and a bar of 16 thin, evenly spaced dashes,
+/// no number. Each dash is 10% of the scale; the last six are the boost above
+/// 100%.
 @MainActor
 final class ScaleHUD {
-    private static let size = NSSize(width: 316, height: 44)
-    private static let topMargin: CGFloat = 8
+    private static let size = NSSize(width: 300, height: 60)
+    private static let topMargin: CGFloat = 10
 
     private let panel: NSPanel
     private let icon = NSImageView()
-    private let valueLabel = NSTextField(labelWithString: "")
     private let segments = SegmentBar()
     private var hideWork: DispatchWorkItem?
 
@@ -36,19 +36,14 @@ final class ScaleHUD {
         let content = NSView(frame: NSRect(origin: .zero, size: Self.size))
         panel.contentView = Self.makeBackground(containing: content)
 
-        icon.symbolConfiguration = .init(pointSize: 15, weight: .semibold)
+        icon.symbolConfiguration = .init(pointSize: 20, weight: .medium)
         icon.contentTintColor = .labelColor
-        icon.frame = NSRect(x: 16, y: 11, width: 22, height: 22)
+        icon.imageAlignment = .alignCenter
+        icon.frame = NSRect(x: 18, y: 16, width: 30, height: 28)
         content.addSubview(icon)
 
-        segments.frame = NSRect(x: 46, y: 18, width: 210, height: 8)
+        segments.frame = NSRect(x: 58, y: 28, width: 218, height: 4)
         content.addSubview(segments)
-
-        valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
-        valueLabel.textColor = .secondaryLabelColor
-        valueLabel.alignment = .right
-        valueLabel.frame = NSRect(x: 258, y: 14, width: 44, height: 16)
-        content.addSubview(valueLabel)
     }
 
     private static func makeBackground(containing content: NSView) -> NSView {
@@ -75,9 +70,8 @@ final class ScaleHUD {
     /// that cannot boost) on the built-in screen.
     func show(percent: Double, top: Double) {
         guard let screen = DisplayLookup.builtInScreen else { return }
-        let symbol = percent > 100.0001 ? "sun.max.fill" : (percent < 50 ? "sun.min.fill" : "sun.max")
+        let symbol = percent < 50 ? "sun.min.fill" : "sun.max.fill"
         icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        valueLabel.stringValue = "\(Int(percent.rounded()))%"
         segments.set(fills: BuiltInBrightnessScale.segmentFills(percent: percent, top: top))
 
         let visible = screen.visibleFrame
@@ -119,7 +113,7 @@ final class ScaleHUD {
     }
 }
 
-/// Sixteen rounded, evenly spaced segments, each filled 0...1.
+/// Sixteen thin, evenly spaced dashes, each filled 0...1.
 private final class SegmentBar: NSView {
     private var tracks: [CALayer] = []
     private var fills: [CALayer] = []
@@ -160,7 +154,7 @@ private final class SegmentBar: NSView {
             let track = tracks[index]
             track.frame = NSRect(x: x, y: 0, width: width, height: bounds.height)
             track.cornerRadius = bounds.height / 2
-            track.backgroundColor = NSColor.labelColor.withAlphaComponent(0.16).cgColor
+            track.backgroundColor = NSColor.labelColor.withAlphaComponent(0.2).cgColor
             let fill = fills[index]
             fill.backgroundColor = NSColor.labelColor.cgColor
             fill.frame = NSRect(x: 0, y: 0, width: width * CGFloat(values[index]), height: bounds.height)
