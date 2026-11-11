@@ -54,8 +54,12 @@ final class BrightnessSampler {
         dlopen("/System/Library/PrivateFrameworks/CoreBrightness.framework/CoreBrightness", RTLD_LAZY)
         client = (NSClassFromString("BrightnessSystemClient") as? NSObject.Type)?.init()
 
-        var iterator = io_iterator_t()
-        if IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOMobileFramebufferShim"), &iterator) == KERN_SUCCESS {
+        // Same lookup as PanelLightService: the shim where it exists, else the
+        // IOMobileFramebuffer base class (IOMobileFramebufferAP on some Macs).
+        for className in ["IOMobileFramebufferShim", "IOMobileFramebuffer"] where framebuffer == 0 {
+            var iterator = io_iterator_t()
+            guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching(className), &iterator) == KERN_SUCCESS
+            else { continue }
             while case let entry = IOIteratorNext(iterator), entry != 0 {
                 let level = (IORegistryEntryCreateCFProperty(entry, "IOMFBBrightnessLevel" as CFString, kCFAllocatorDefault, 0)?
                     .takeRetainedValue() as? NSNumber)?.doubleValue ?? 0

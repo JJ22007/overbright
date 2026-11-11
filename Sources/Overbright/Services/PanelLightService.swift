@@ -33,13 +33,27 @@ final class PanelLightService {
         return nits.isFinite && nits > 0 ? nits : nil
     }
 
+    /// Registry classes that carry `IOMFBBrightnessLevel`. Some Macs expose the
+    /// built-in panel as `IOMobileFramebufferShim`; others (an M1 Max on macOS
+    /// 27.2) have no shim, and the panel is an `IOMobileFramebufferAP`, which
+    /// matching the `IOMobileFramebuffer` base class finds.
+    static let framebufferClasses = ["IOMobileFramebufferShim", "IOMobileFramebuffer"]
+
     /// The framebuffer that reports a backlight in nits. External displays
     /// report 1.0 (65536) or nothing, so the built-in one is the only match
     /// above a couple of nits.
     private static func findBuiltInFramebuffer() -> io_registry_entry_t {
+        for className in framebufferClasses {
+            let found = findBuiltInFramebuffer(className: className)
+            if found != 0 { return found }
+        }
+        return 0
+    }
+
+    private static func findBuiltInFramebuffer(className: String) -> io_registry_entry_t {
         var iterator = io_iterator_t()
         guard IOServiceGetMatchingServices(
-            kIOMainPortDefault, IOServiceMatching("IOMobileFramebufferShim"), &iterator
+            kIOMainPortDefault, IOServiceMatching(className), &iterator
         ) == KERN_SUCCESS else { return 0 }
         defer { IOObjectRelease(iterator) }
         var found: io_registry_entry_t = 0
