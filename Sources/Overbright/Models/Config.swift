@@ -14,12 +14,13 @@ struct Preset: Equatable {
 /// `warnings` and replaced by its default. Decoding never fails on content;
 /// only unreadable JSON is an error.
 struct Config: Equatable {
-    static let levelRange: ClosedRange<Double> = 100...160
+    static let levelRange: ClosedRange<Double> = 100...400
     static let stepRange: ClosedRange<Double> = 0.5...30
     static let languages = ["auto", "en", "zh"]
 
     /// Highest level the slider, the brightness keys and the CLI can reach.
-    var maxLevel: Double = 160
+    /// nil ("auto", the default) is as high as the panel goes.
+    var maxLevel: Double? = nil
     /// Percent added per brightness-key press above 100%.
     var keyStep: Double = 6.25
     /// Percent added per press while holding Option+Shift.
@@ -80,10 +81,17 @@ struct Config: Equatable {
             warnings.append("\"\(key)\" is not a known option and was ignored")
         }
 
-        maxLevel = number("maxLevel", in: dictionary, range: Self.levelRange, default: maxLevel)
-        if maxLevel <= 100 {
-            warnings.append("\"maxLevel\" must be above 100; using 160")
-            maxLevel = 160
+        if let text = dictionary["maxLevel"] as? String {
+            if text.lowercased() != "auto" {
+                warnings.append("\"maxLevel\" must be a number or \"auto\"; using \"auto\"")
+            }
+        } else if dictionary["maxLevel"] != nil {
+            let level = number("maxLevel", in: dictionary, range: Self.levelRange, default: 400)
+            if level <= 100 {
+                warnings.append("\"maxLevel\" must be above 100; using \"auto\"")
+            } else {
+                maxLevel = level
+            }
         }
         keyStep = number("keyStep", in: dictionary, range: Self.stepRange, default: keyStep)
         fineKeyStep = number(
@@ -160,7 +168,7 @@ struct Config: Equatable {
             : "[\n" + presetLines.joined(separator: ",\n") + "\n  ]"
         return """
         {
-          "maxLevel": \(format(maxLevel)),
+          "maxLevel": \(maxLevel.map(format) ?? quote("auto")),
           "keyStep": \(format(keyStep)),
           "fineKeyStep": \(format(fineKeyStep)),
           "brightnessKeys": \(brightnessKeys),
@@ -230,14 +238,14 @@ struct Config: Equatable {
         guard let raw = dictionary["level"], !Self.isBoolean(raw),
               let level = (raw as? NSNumber)?.doubleValue, level.isFinite,
               Self.levelRange.contains(level) else {
-            warnings.append("\(label) (\"\(name)\") needs a \"level\" between 100 and 160; skipped")
+            warnings.append("\(label) (\"\(name)\") needs a \"level\" between 100 and 400; skipped")
             return nil
         }
         if presets.contains(where: { $0.name.lowercased() == name.lowercased() }) {
             warnings.append("\(label) repeats the name \"\(name)\"; skipped")
             return nil
         }
-        if level > maxLevel {
+        if let maxLevel, level > maxLevel {
             warnings.append(
                 "\(label) (\"\(name)\") is above maxLevel and will stop at \(Self.plain(maxLevel))"
             )

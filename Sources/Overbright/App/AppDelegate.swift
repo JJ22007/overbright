@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let boostController = BoostController()
         boostController.method = ConfigStore.shared.config.resolvedBoostMethod()
+        boostController.onCeilingChange = { [weak self] in self?.statusController?.rebuildMenu() }
         self.boostController = boostController
 
         let brightnessKeyService = BrightnessKeyService { [weak self] direction, fineGrained in
@@ -106,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyConfigToModels() {
         let config = ConfigStore.shared.config
         L10n.language = config.language
-        BoostLevel.cap = Float(config.maxLevel / 100)
+        BoostLevel.userCap = config.maxLevel.map { Float($0 / 100) } ?? BoostLevel.absoluteMaximum
         BrightnessKeyStep.coarse = Float(config.keyStep / 100)
         BrightnessKeyStep.fine = Float(config.fineKeyStep / 100)
     }

@@ -241,7 +241,7 @@ final class CommandServer {
             let raw = arguments.dropFirst().first?.replacingOccurrences(of: "%", with: "") ?? ""
             let top = boostController.scaleTop
             guard let percent = Double(raw), percent.isFinite, (0...top).contains(percent) else {
-                finish(2, "error: set needs a percentage from 0 to \(Self.plain(min(top, config.maxLevel)))")
+                finish(2, "error: set needs a percentage from 0 to \(Self.plain(top))")
                 return
             }
             boostController.setScale(percent)
@@ -418,7 +418,8 @@ final class CommandServer {
         var status: [String: Any] = [
             "state": stateName,
             "level": snapshot.level.percentage,
-            "maxLevel": ConfigStore.shared.config.maxLevel,
+            "maxLevel": ConfigStore.shared.config.maxLevel.map { $0 as Any } ?? "auto",
+            "panelMaxLevel": (Double(BoostLevel.maximum) * 10000).rounded() / 100,
             "supported": snapshot.potentialEDRHeadroom > 1.05,
             "edrHeadroom": (snapshot.currentEDRHeadroom * 100).rounded() / 100,
             "potentialEdrHeadroom": (snapshot.potentialEDRHeadroom * 100).rounded() / 100,

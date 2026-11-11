@@ -88,16 +88,32 @@ private final class MultiplyView: MTKView, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
-        let now = ProcessInfo.processInfo.systemUptime
-        if let lastDrawAt { maxFrameGap = max(maxFrameGap, now - lastDrawAt) }
-        lastDrawAt = now
         guard let descriptor = currentRenderPassDescriptor,
               let buffer = commandQueue.makeCommandBuffer(),
               let encoder = buffer.makeRenderCommandEncoder(descriptor: descriptor),
               let drawable = currentDrawable else { return }
         encoder.endEncoding()
         buffer.present(drawable)
+        // Measured where a frame reaches the screen, not where one was asked
+        // for: a draw without a drawable shows nothing.
+        drawable.addPresentedHandler { [weak self] presented in
+            let at = presented.presentedTime
+            guard at > 0 else { return }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.framePresented(at: at) }
+            }
+        }
         buffer.commit()
+    }
+
+    private func framePresented(at time: CFTimeInterval) {
+        if let lastDrawAt, time > lastDrawAt { maxFrameGap = max(maxFrameGap, time - lastDrawAt) }
+        lastDrawAt = max(lastDrawAt ?? 0, time)
+    }
+
+    /// Time since the last frame reached the screen.
+    var sinceLastFrame: TimeInterval {
+        lastDrawAt.map { CACurrentMediaTime() - $0 } ?? 0
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
@@ -132,7 +148,7 @@ final class EDROverlayService {
         window.hidesOnDeactivate = false
         window.isReleasedWhenClosed = false
         // Screenshots and recordings show the picture as apps drew it.
-        window.sharingType = .none
+        window.sharingType = UserDefaults.standard.bool(forKey: "debugCapturableOverlay") ? .readOnly : .none
         window.contentView = view
         window.setFrame(screen.frame, display: false)
         window.orderFrontRegardless()
@@ -156,6 +172,11 @@ final class EDROverlayService {
     }
 
     private let panelLight = PanelLightService()
+
+    /// The screen's EDR headroom, reported once the backlight has settled at
+    /// its peak (and again if it changes), for `PanelCeiling`.
+    var onHeadroom: ((Double) -> Void)?
+    private var reportedHeadroom: Double?
     private var trackingTimer: Timer?
     private var peakReachedAt: TimeInterval?
     private(set) var correction: Double = 1
@@ -209,6 +230,12 @@ final class EDROverlayService {
             peakReachedAt = nil
         }
         let next = EDRWhiteCorrection.value(sincePeak: peakReachedAt.map { now - $0 })
+        if atPeak, next >= EDRWhiteCorrection.full,
+           let headroom = window?.screen?.maximumExtendedDynamicRangeColorComponentValue,
+           abs(headroom - (reportedHeadroom ?? 0)) > 0.005 {
+            reportedHeadroom = headroom
+            onHeadroom?(Double(headroom))
+        }
         if abs(next - correction) > 0.0005 {
             correction = next
             render()
@@ -219,6 +246,7 @@ final class EDROverlayService {
         trackingTimer?.invalidate()
         trackingTimer = nil
         peakReachedAt = nil
+        reportedHeadroom = nil
         correction = 1
         view?.stopDrawing()
         if let activity { ProcessInfo.processInfo.endActivity(activity) }

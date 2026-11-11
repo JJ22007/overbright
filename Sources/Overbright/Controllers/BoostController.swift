@@ -14,6 +14,7 @@ final class BoostController {
 
     private enum DefaultsKey {
         static let level = "boostLevel"
+        static let panelMaximum = "panelBoostMaximum"
         static let recoveryRequired = "recoveryRequired"
         static let savedNativeBrightness = "savedNativeBrightness"
     }
@@ -41,9 +42,39 @@ final class BoostController {
     /// The configured boost method.
     var method: BoostMethod = .classic {
         didSet {
+            loadPanelMaximum()
             guard method != oldValue, wantedActive, state == .active else { return }
             applyCurrentLevel()
         }
+    }
+
+    /// Called when the measured panel ceiling changes the top of the scale.
+    var onCeilingChange: (() -> Void)?
+
+    /// The overlay method goes as high as the panel: the ceiling measured at
+    /// the last boost (`PanelCeiling`), remembered across launches. The classic
+    /// method stays at its calibrated 160%.
+    private func loadPanelMaximum() {
+        let stored = defaults.object(forKey: DefaultsKey.panelMaximum) as? NSNumber
+        BoostLevel.maximum = method == .overlay
+            ? max(stored?.floatValue ?? BoostLevel.classicMaximum, BoostLevel.classicMaximum)
+            : BoostLevel.classicMaximum
+        // A stored level above the old ceiling was clamped at launch.
+        if let wanted = (defaults.object(forKey: DefaultsKey.level) as? NSNumber)?.floatValue,
+           abs(BoostLevel(wanted).factor - level.factor) > 0.0001 {
+            level = BoostLevel(wanted)
+        }
+    }
+
+    private func panelHeadroomMeasured(_ headroom: Double) {
+        guard method == .overlay, let top = PanelCeiling.level(headroom: headroom),
+              abs(top - BoostLevel.maximum) >= 0.01 else { return }
+        logger.info("panel ceiling \(top, privacy: .public) from headroom \(headroom, privacy: .public)")
+        BoostLevel.maximum = top
+        defaults.set(top, forKey: DefaultsKey.panelMaximum)
+        capDidChange()
+        onCeilingChange?()
+        publishSnapshot()
     }
     var effectiveMethod: BoostMethod { method }
 
@@ -57,6 +88,9 @@ final class BoostController {
     init() {
         let stored = defaults.object(forKey: DefaultsKey.level) as? NSNumber
         level = BoostLevel(stored?.floatValue ?? BoostLevel.defaultValue)
+        overlay.onHeadroom = { [weak self] headroom in
+            MainActor.assumeIsolated { self?.panelHeadroomMeasured(headroom) }
+        }
 
         if let saved = defaults.object(
             forKey: DefaultsKey.savedNativeBrightness

@@ -5,9 +5,9 @@ import AppKit
 /// Overbright handles F1/F2, so there is never a second one.
 ///
 /// Styled after the macOS 27.2 volume indicator: a glass capsule at the top
-/// centre of the screen with a sun and a bar of 16 thin, evenly spaced dashes,
-/// no number. Each dash is 10% of the scale; the last six are the boost above
-/// 100%.
+/// centre of the screen with a sun, a bar of 16 thin, evenly spaced dashes and
+/// the percentage. The bar spans 0% to the top of the scale, which follows the
+/// panel (`BoostLevel.cap`), so each dash is 1/16 of whatever this Mac can do.
 @MainActor
 final class ScaleHUD {
     private static let size = NSSize(width: 300, height: 60)
@@ -16,6 +16,7 @@ final class ScaleHUD {
     private let panel: NSPanel
     private let icon = NSImageView()
     private let segments = SegmentBar()
+    private let valueLabel = NSTextField(labelWithString: "")
     private var hideWork: DispatchWorkItem?
 
     init() {
@@ -42,8 +43,14 @@ final class ScaleHUD {
         icon.frame = NSRect(x: 18, y: 16, width: 30, height: 28)
         content.addSubview(icon)
 
-        segments.frame = NSRect(x: 58, y: 28, width: 218, height: 4)
+        segments.frame = NSRect(x: 58, y: 28, width: 178, height: 4)
         content.addSubview(segments)
+
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 13, weight: .medium)
+        valueLabel.textColor = .secondaryLabelColor
+        valueLabel.alignment = .right
+        valueLabel.frame = NSRect(x: 238, y: 21, width: 44, height: 18)
+        content.addSubview(valueLabel)
     }
 
     private static func makeBackground(containing content: NSView) -> NSView {
@@ -72,6 +79,7 @@ final class ScaleHUD {
         guard let screen = DisplayLookup.builtInScreen else { return }
         let symbol = percent < 50 ? "sun.min.fill" : "sun.max.fill"
         icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        valueLabel.stringValue = "\(Int(percent.rounded()))%"
         segments.set(fills: BuiltInBrightnessScale.segmentFills(percent: percent, top: top))
 
         let visible = screen.visibleFrame
