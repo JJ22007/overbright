@@ -25,10 +25,13 @@ private final class MultiplyView: MTKView, MTKViewDelegate {
         drawableSize = CGSize(width: 16, height: 16)
         framebufferOnly = true
         // Keep redrawing. A layer that is drawn once and left alone is, after
-        // about a second, shown as an opaque sheet without the multiply (seen
-        // with a camera on a black screen). A redraw a few times a second keeps
-        // it composited; the drawable is 16×16, so this costs nothing.
-        preferredFramesPerSecond = 4
+        // about a second, shown as an opaque white sheet without the multiply
+        // (seen with a camera on a black screen). MTKView's own display link
+        // stops when macOS naps a background app or decides the window is not
+        // visible, so the view is paused and driven by a timer of ours instead;
+        // the overlay service also keeps the app out of App Nap.
+        isPaused = true
+        enableSetNeedsDisplay = false
         if let metalLayer = layer as? CAMetalLayer {
             metalLayer.wantsExtendedDynamicRangeContent = true
             metalLayer.isOpaque = false
@@ -41,27 +44,53 @@ private final class MultiplyView: MTKView, MTKViewDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
-    private var idleFrames = 0
+    private var timer: Timer?
+    private var burstFrames = 0
+    private var lastDrawAt: TimeInterval?
 
-    /// Draws `multiplier` now and keeps redrawing at the display's rate for
+    /// The longest time between two redraws since the layer was shown. Above
+    /// about a second the layer turns into an opaque sheet; `status --json`
+    /// reports it as `overlayMaxFrameGap`.
+    private(set) var maxFrameGap: TimeInterval = 0
+
+    /// Draws `multiplier` now and keeps redrawing at 120 frames a second for
     /// half a second: a change reaches the screen in about 0.15 s that way,
-    /// against 0.4 s at the idle 4 frames per second (measured).
+    /// against 0.4 s at the idle 4 frames a second (measured).
     func show(_ multiplier: Double) {
         clearColor = MTLClearColorMake(multiplier, multiplier, multiplier, 1)
-        preferredFramesPerSecond = 120
-        idleFrames = 0
+        burstFrames = 60
+        schedule(interval: 1.0 / 120.0)
+        draw()
+    }
+
+    private func schedule(interval: TimeInterval) {
+        if let timer, timer.isValid, timer.timeInterval == interval { return }
+        timer?.invalidate()
+        let next = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        next.tolerance = interval / 10
+        RunLoop.main.add(next, forMode: .common)
+        timer = next
+    }
+
+    private func tick() {
+        if burstFrames > 0 {
+            burstFrames -= 1
+            if burstFrames == 0 { schedule(interval: 0.25) }
+        }
         draw()
     }
 
     func stopDrawing() {
-        isPaused = true
+        timer?.invalidate()
+        timer = nil
     }
 
     func draw(in view: MTKView) {
-        if preferredFramesPerSecond > 4 {
-            idleFrames += 1
-            if idleFrames > 60 { preferredFramesPerSecond = 4 }
-        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let lastDrawAt { maxFrameGap = max(maxFrameGap, now - lastDrawAt) }
+        lastDrawAt = now
         guard let descriptor = currentRenderPassDescriptor,
               let buffer = commandQueue.makeCommandBuffer(),
               let encoder = buffer.makeRenderCommandEncoder(descriptor: descriptor),
@@ -81,6 +110,13 @@ final class EDROverlayService {
     private(set) var multiplier: Float = 1
 
     var isShowing: Bool { window?.isVisible ?? false }
+
+    /// Longest gap between redraws while showing (see `MultiplyView.maxFrameGap`).
+    var maxFrameGap: TimeInterval { view?.maxFrameGap ?? 0 }
+
+    /// Keeps macOS from napping the app while the layer is up: a napped app's
+    /// timers stall, and a layer that is not redrawn turns white.
+    private var activity: NSObjectProtocol?
 
     func start(on screen: NSScreen) -> Bool {
         stop()
@@ -102,6 +138,10 @@ final class EDROverlayService {
         window.orderFrontRegardless()
         self.window = window
         self.view = view
+        activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+            reason: "Overbright boost layer must keep redrawing"
+        )
         level = 1
         startTracking()
         render()
@@ -181,6 +221,8 @@ final class EDROverlayService {
         peakReachedAt = nil
         correction = 1
         view?.stopDrawing()
+        if let activity { ProcessInfo.processInfo.endActivity(activity) }
+        activity = nil
         window?.orderOut(nil)
         window?.close()
         window = nil

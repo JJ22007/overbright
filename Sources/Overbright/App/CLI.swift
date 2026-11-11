@@ -430,6 +430,7 @@ final class CommandServer {
             "scale": boostController.scalePercent.map { ($0 * 100).rounded() / 100 } ?? NSNull(),
             "scaleTop": boostController.scaleTop,
             "boostMethod": boostController.effectiveMethod.rawValue,
+            "overlayMaxFrameGap": (boostController.overlayMaxFrameGap * 1000).rounded() / 1000,
             "externalDisplays": externalDisplays.displays.map {
                 [
                     "id": Int($0.id),

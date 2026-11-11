@@ -47,6 +47,9 @@ final class BoostController {
     }
     var effectiveMethod: BoostMethod { method }
 
+    /// Longest gap between boost-layer redraws while it is up (overlay method).
+    var overlayMaxFrameGap: TimeInterval { overlay.maxFrameGap }
+
     private(set) var state: BoostState = .off
     private(set) var level: BoostLevel
     var onSnapshot: ((BoostSnapshot) -> Void)?
