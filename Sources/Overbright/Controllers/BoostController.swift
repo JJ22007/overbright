@@ -21,7 +21,7 @@ final class BoostController {
     private let gamma = GammaTableService()
     private let edrTrigger = EDRTriggerService()
     private let nativeBrightness = NativeBrightnessService()
-    private let panelLight = PanelLightService()
+    private let overlay = EDROverlayService()
     private let defaults = UserDefaults.standard
     private let logger = Logger(subsystem: AppInfo.bundleID, category: "Recovery")
 
@@ -38,31 +38,14 @@ final class BoostController {
     private var backlightObservation = BacklightObservation()
     private var lastObservedBacklight: Float?
 
-    /// The configured boost method. `.panel` falls back to `.classic` when the
-    /// panel cannot be measured.
+    /// The configured boost method.
     var method: BoostMethod = .classic {
         didSet {
             guard method != oldValue, wantedActive, state == .active else { return }
             applyCurrentLevel()
         }
     }
-    var effectiveMethod: BoostMethod {
-        method == .panel && panelLight.isAvailable ? .panel : .classic
-    }
-
-    // Panel compensation (see `BoostMethod.panel`). While the boost is on, and
-    // while `settling` after it, a fast timer keeps ordinary white at its target
-    // as the backlight ramps.
-    private var compensationTimer: Timer?
-    private var settling = false
-    private var lastPanelNits: Double?
-    private var lastPanelTime: TimeInterval = 0
-    private var stablePanelTicks = 0
-    private var cachedStandardNits: (value: Double, at: TimeInterval)?
-    private var panelBeforeBoost: Double?
-    /// Called after Overbright resets ColorSync, which resets every display's
-    /// gamma, so external software dimming can be put back at once.
-    var onColorSyncReset: (() -> Void)?
+    var effectiveMethod: BoostMethod { method }
 
     private(set) var state: BoostState = .off
     private(set) var level: BoostLevel
@@ -130,7 +113,6 @@ final class BoostController {
 
     func enable(raiseBacklight: Bool = true) {
         if wantedActive && state == .active { return }
-        if settling, resumeFromSettling() { return }
         backlightObservation.reset()
         resumePending = false
         if level.factor <= BoostLevel.minimum {
@@ -193,11 +175,12 @@ final class BoostController {
             defaults.synchronize()
         }
 
-        guard gamma.captureBaseline(displayID: displayID) else {
+        // The overlay method never writes a gamma table: on macOS 27.2 a table
+        // installed when EDR starts makes white jump to the full backlight.
+        guard effectiveMethod == .overlay || gamma.captureBaseline(displayID: displayID) else {
             failActivation(L10n.tr("Could not read the display gamma table", "无法读取屏幕颜色表"))
             return
         }
-        panelBeforeBoost = panelLight.panelNits
 
         guard !raiseBacklight || nativeBrightness.write(1, displayID: displayID) else {
             failActivation(L10n.tr("Could not set the system backlight level", "无法设置系统背光亮度"))
@@ -205,7 +188,7 @@ final class BoostController {
         }
         backlightMonitoringEnabled = true
         lastObservedBacklight = nativeBrightness.read(displayID: displayID)
-        guard edrTrigger.start(on: screen) else {
+        guard startEDRLayer(on: screen) else {
             failActivation(L10n.tr("Could not create the EDR layer", "无法创建 EDR 图层"))
             return
         }
@@ -213,15 +196,20 @@ final class BoostController {
         waitForEDR(generation: generation, attemptsRemaining: 80)
     }
 
+    private func startEDRLayer(on screen: NSScreen) -> Bool {
+        effectiveMethod == .overlay ? overlay.start(on: screen) : edrTrigger.start(on: screen)
+    }
+
+    private func stopEDRLayers() {
+        overlay.stop()
+        edrTrigger.stop()
+    }
+
     @discardableResult
     func disable() -> Bool {
         resumePending = false
         wantedActive = false
         engagementGeneration += 1
-        if beginSettling() {
-            setState(.off)
-            return true
-        }
         let restored = restoreDisplay(restoreNativeBrightness: true)
         setState(
             restored
@@ -286,11 +274,6 @@ final class BoostController {
         resumePending = false
         let wasUnsuspended = suspensionReasons.isEmpty
         suspensionReasons.insert(reason)
-        if settling {
-            // Nothing to hold steady on a sleeping screen; put everything back.
-            restoreDisplay(restoreNativeBrightness: true)
-            return
-        }
         guard wantedActive, wasUnsuspended else { return }
         engagementGeneration += 1
         let restored = restoreDisplay(restoreNativeBrightness: true)
@@ -388,7 +371,7 @@ final class BoostController {
         GammaTableService.restoreColorSyncDefaults()
         gammaRecoveryHandled = true
         gamma.discardBaseline()
-        edrTrigger.stop()
+        stopEDRLayers()
 
         var nativeBrightnessRestored = true
         if let savedNativeBrightness {
@@ -433,9 +416,9 @@ final class BoostController {
         guard wantedActive else { return }
 
         let currentEDR = screen.maximumExtendedDynamicRangeColorComponentValue
-        // The panel method follows the backlight as it ramps up, so it can take
-        // over at once instead of waiting for the ramp to finish.
-        if backlightReady && (currentEDR > 1.05 || effectiveMethod == .panel) {
+        // The overlay is limited by the headroom as the backlight ramps up, so
+        // it can take over at once instead of waiting for the ramp to finish.
+        if backlightReady && (currentEDR > 1.05 || effectiveMethod == .overlay) {
             applyCurrentLevel()
             return
         }
@@ -462,19 +445,15 @@ final class BoostController {
         }
 
         guard verifyNativeBrightnessForBoost(displayID: displayID) else { return }
-        let safeFactor = targetFactor(for: screen)
-        let applied = effectiveMethod == .panel
-            ? gamma.apply(exactFactor: safeFactor)
-            : gamma.apply(factor: safeFactor)
+        let applied = effectiveMethod == .overlay
+            ? overlay.show(level: level.factor)
+            : gamma.apply(factor: targetFactor(for: screen))
 
         guard applied else {
             failActivation(L10n.tr("Could not apply the boost", "无法应用屏幕增亮"))
             return
         }
         setState(.active)
-        if effectiveMethod == .panel {
-            startCompensationTracking()
-        }
     }
 
     private func failActivation(_ message: String) {
@@ -496,11 +475,9 @@ final class BoostController {
 
     @discardableResult
     private func restoreDisplay(restoreNativeBrightness: Bool) -> Bool {
-        settling = false
-        stopCompensationTracking()
         backlightMonitoringEnabled = false
         let gammaRestored = restoreGammaWithFallback()
-        edrTrigger.stop()
+        stopEDRLayers()
 
         var nativeBrightnessRestored = true
         if restoreNativeBrightness, let savedNativeBrightness {
@@ -538,7 +515,6 @@ final class BoostController {
     }
 
     private func performIntegrityCheck() {
-        if settling { return }
         guard wantedActive else {
             retryPendingRecovery()
             return
@@ -556,12 +532,24 @@ final class BoostController {
 
         guard verifyNativeBrightnessForBoost(displayID: displayID) else { return }
 
+        if effectiveMethod == .overlay {
+            if overlay.isShowing {
+                overlay.follow(screen)
+            } else if !overlay.start(on: screen) {
+                failActivation(L10n.tr("Could not re-enter EDR mode", "无法恢复 EDR 模式"))
+                return
+            }
+            if overlay.level != level.factor { applyCurrentLevel() }
+            publishSnapshot()
+            return
+        }
+
         if screen.maximumExtendedDynamicRangeColorComponentValue <= 1.05 {
             guard restoreGammaBeforeRetrigger() else {
                 failActivation(L10n.tr("Could not safely restore the display gamma table", "无法安全恢复屏幕颜色表"))
                 return
             }
-            edrTrigger.stop()
+            stopEDRLayers()
             gamma.discardBaseline()
             engagementGeneration += 1
             let generation = engagementGeneration
@@ -588,9 +576,6 @@ final class BoostController {
     }
 
     private func targetFactor(for screen: NSScreen) -> Float {
-        if effectiveMethod == .panel {
-            return panelFactor(target: Double(level.factor)) ?? gamma.appliedFactor
-        }
         let currentEDR = Float(
             screen.maximumExtendedDynamicRangeColorComponentValue
         )
@@ -664,7 +649,7 @@ final class BoostController {
         defaults.synchronize()
 
         let gammaRestored = restoreGammaWithFallback()
-        edrTrigger.stop()
+        stopEDRLayers()
         if gammaRestored {
             gamma.discardBaseline()
             activeDisplayID = nil
@@ -751,7 +736,6 @@ final class BoostController {
     }
 
     private func retryPendingRecovery() {
-        guard !settling else { return }
         guard defaults.bool(forKey: DefaultsKey.recoveryRequired) else { return }
         if completePendingRecovery() {
             if state != .off {
@@ -787,162 +771,6 @@ final class BoostController {
             activeColorProfileIdentity = nil
         }
         return nativeBrightnessRestored
-    }
-
-    // MARK: Panel compensation
-
-    private var standardNits: Double? {
-        let now = ProcessInfo.processInfo.systemUptime
-        if let cached = cachedStandardNits, now - cached.at < 0.25 { return cached.value }
-        guard let value = panelLight.standardNits else { return cachedStandardNits?.value }
-        cachedStandardNits = (value, now)
-        return value
-    }
-
-    /// The gamma endpoint that puts ordinary white at `target` × the standard
-    /// luminance on the backlight as it will be when the table takes effect.
-    private func panelFactor(target: Double) -> Float? {
-        guard let panel = predictedPanelNits(), let standard = standardNits else { return nil }
-        return PanelCompensation.factor(
-            targetNits: PanelCompensation.targetNits(standardNits: standard, level: target),
-            panelNits: panel
-        )
-    }
-
-    /// Reads the backlight and, while it ramps, predicts it one tracking tick
-    /// plus a frame ahead, never past the panel's peak. Both the tracking
-    /// timer and a key press use this, so a press mid-ramp does not overshoot.
-    private func predictedPanelNits() -> Double? {
-        guard let panel = panelLight.panelNits else { return nil }
-        let now = ProcessInfo.processInfo.systemUptime
-        defer {
-            if lastPanelNits.map({ abs($0 - panel) >= 0.5 }) ?? true {
-                stablePanelTicks = 0
-            }
-            lastPanelNits = panel
-            lastPanelTime = now
-        }
-        guard let last = lastPanelNits, abs(panel - last) >= 0.5, now - lastPanelTime < 0.25 else {
-            return panel
-        }
-        let predicted = PanelCompensation.predictedPanelNits(
-            previous: last, current: panel, interval: now - lastPanelTime, lead: Self.trackingLead
-        )
-        return min(predicted, max(panel, panelLight.peakNits ?? predicted))
-    }
-
-    private func startCompensationTracking() {
-        guard compensationTimer == nil else { return }
-        stablePanelTicks = 0
-        let timer = Timer(timeInterval: Self.trackingInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.trackPanel() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        compensationTimer = timer
-    }
-
-    private func stopCompensationTracking() {
-        compensationTimer?.invalidate()
-        compensationTimer = nil
-        lastPanelNits = nil
-    }
-
-    /// 120 Hz while the backlight moves, about 4 Hz once it is steady.
-    private static let trackingInterval = 1.0 / 120.0
-    /// How far ahead to compensate: one tracking tick plus a frame for the new
-    /// table to reach the panel.
-    private static let trackingLead = 1.0 / 120.0 + 1.0 / 60.0
-
-    private func trackPanel() {
-        let boosting = wantedActive && state == .active && suspensionReasons.isEmpty
-        guard effectiveMethod == .panel, boosting || settling else {
-            stopCompensationTracking()
-            return
-        }
-        if let last = lastPanelNits, let panel = panelLight.panelNits, abs(panel - last) < 0.5 {
-            stablePanelTicks += 1
-            if stablePanelTicks % 30 != 0 { return }
-        }
-        guard let factor = panelFactor(target: settling ? 1 : Double(level.factor)),
-              let panel = lastPanelNits else { return }
-        if abs(factor - gamma.appliedFactor) > 0.0005 {
-            gamma.apply(exactFactor: factor)
-        }
-        if settling, let standard = standardNits,
-           PanelCompensation.isSettled(panelNits: panel, standardNits: standard, beforeBoostNits: panelBeforeBoost) {
-            finishSettling(panelNits: panel, standardNits: standard)
-        }
-    }
-
-    /// Leaving the boost with the panel method. macOS keeps the backlight at its
-    /// EDR peak for about 15 seconds after the last EDR content goes away and
-    /// then ramps it down over about 2 seconds. Restoring the original table at
-    /// once would show ordinary white at that peak the whole time. Instead the
-    /// table keeps white at the standard luminance immediately and follows the
-    /// backlight down; the original table goes back once the backlight is back.
-    private func beginSettling() -> Bool {
-        guard effectiveMethod == .panel, suspensionReasons.isEmpty, gamma.hasBaseline,
-              let panel = panelLight.panelNits, let standard = standardNits,
-              !PanelCompensation.isSettled(panelNits: panel, standardNits: standard, beforeBoostNits: panelBeforeBoost) else {
-            return false
-        }
-        edrTrigger.stop()
-        backlightMonitoringEnabled = false
-        settling = true
-        if let saved = savedNativeBrightness, restoreNativeBrightnessValue(saved) {
-            savedNativeBrightness = nil
-            defaults.removeObject(forKey: DefaultsKey.savedNativeBrightness)
-        }
-        // recoveryRequired stays set until the original table is back.
-        defaults.set(true, forKey: DefaultsKey.recoveryRequired)
-        if let factor = panelFactor(target: 1) {
-            gamma.apply(exactFactor: factor)
-        }
-        logger.info("Boost released; holding standard white while the backlight settles from \(panel, privacy: .public) nits")
-        startCompensationTracking()
-        return true
-    }
-
-    private func finishSettling(panelNits: Double, standardNits: Double) {
-        settling = false
-        stopCompensationTracking()
-        if PanelCompensation.needsSystemScaling(panelNits: panelNits, standardNits: standardNits) {
-            // Another app keeps EDR on. An explicit table would show white at
-            // the raised backlight; the system's own table gets macOS's scaling.
-            GammaTableService.restoreColorSyncDefaults()
-            gammaRecoveryHandled = true
-            gamma.discardBaseline()
-            onColorSyncReset?()
-        }
-        let restored = restoreDisplay(restoreNativeBrightness: true)
-        logger.info("Backlight settled; original gamma restored=\(restored)")
-        if !restored {
-            setState(.unavailable(L10n.tr(
-                "Standard brightness is not restored yet; keep the app running",
-                "标准亮度恢复待处理，请保持应用运行"
-            )))
-        }
-    }
-
-    /// Turning the boost back on while settling: the table, the baseline and the
-    /// raised backlight are all still in place, so this is immediate.
-    private func resumeFromSettling() -> Bool {
-        guard let screen = DisplayLookup.builtInScreen, let displayID = screen.overbrightID,
-              displayID == activeDisplayID, edrTrigger.start(on: screen) else {
-            return false
-        }
-        settling = false
-        engagementGeneration += 1
-        wantedActive = true
-        backlightObservation.reset()
-        if savedNativeBrightness == nil, let current = nativeBrightness.read(displayID: displayID) {
-            savedNativeBrightness = current
-            defaults.set(current, forKey: DefaultsKey.savedNativeBrightness)
-        }
-        backlightMonitoringEnabled = true
-        lastObservedBacklight = nativeBrightness.read(displayID: displayID)
-        applyCurrentLevel()
-        return true
     }
 
     // MARK: One scale, 0–160%

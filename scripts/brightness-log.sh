@@ -4,8 +4,7 @@
 #   --duration s    stop after this many seconds (default: until Ctrl-C)
 #   --changes       print a row only when a value changed
 #   --once          print one row and exit
-#   --model m       how whiteNits is estimated: panel (default) or classic
-# Columns and the luminance model are explained in scripts/tools/BrightnessSampler.swift.
+# Columns are explained in scripts/tools/BrightnessSampler.swift.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 binary=.build/brightness-log

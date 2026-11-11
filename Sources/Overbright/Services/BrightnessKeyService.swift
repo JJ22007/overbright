@@ -119,6 +119,35 @@ final class BrightnessKeyService {
         return running
     }
 
+    /// Posts one press (down, then up) of a brightness media key at the HID
+    /// tap, where a keyboard's presses enter. Used by `overbright key --real`
+    /// to test the whole path: tap, handler, and macOS for keys passed on.
+    static func postMediaKey(
+        _ direction: BrightnessKeyDirection,
+        control: Bool,
+        fineGrained: Bool
+    ) {
+        let keyCode = direction == .increase ? 2 : 3
+        var modifiers: NSEvent.ModifierFlags = []
+        if control { modifiers.insert(.control) }
+        if fineGrained { modifiers.formUnion([.option, .shift]) }
+        for phase in [0x0A, 0x0B] {
+            let event = NSEvent.otherEvent(
+                with: .systemDefined,
+                location: .zero,
+                modifierFlags: modifiers.union(.init(rawValue: UInt(phase << 8))),
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: 0,
+                context: nil,
+                subtype: 8,
+                data1: (keyCode << 16) | (phase << 8),
+                data2: -1
+            )
+            event?.cgEvent?.post(tap: .cghidEventTap)
+            usleep(20_000)
+        }
+    }
+
     func stop() {
         keySequence = BrightnessKeySequence()
         if let runLoopSource {

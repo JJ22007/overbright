@@ -76,6 +76,8 @@ enum OverbrightApplication {
 
         ConfigStore.shared.load()
         let controller = BoostController()
+        controller.method = ConfigStore.shared.config.resolvedBoostMethod()
+        print("SELFTEST method=\(controller.effectiveMethod.rawValue)")
         let brightnessService = NativeBrightnessService()
         guard let displayID = DisplayLookup.builtInScreen?.overbrightID,
               let baselineEndpoint = GammaTableService.readEndpoint(
@@ -93,7 +95,10 @@ enum OverbrightApplication {
         var completionStarted = false
         var testedWake = false
         var testedProfileRecovery = false
-        let adjustedBacklight: Float = 0.7
+        // A small change that macOS or auto-brightness can make while boosted.
+        // The boost must follow it, not end; lowering the backlight further
+        // ends the boost by design (BuiltInBrightnessScale.backlightDropEndsBoost).
+        let adjustedBacklight: Float = 0.9795198
 
         controller.onSnapshot = { snapshot in
             print(
@@ -106,7 +111,7 @@ enum OverbrightApplication {
             if !testedWake {
                 testedWake = true
                 DispatchQueue.main.async {
-                    for value: Float in [0.9795198, adjustedBacklight] {
+                    for value: Float in [adjustedBacklight] {
                         guard brightnessService.write(value, displayID: displayID) else {
                             controller.shutdown()
                             _ = brightnessService.write(baselineBrightness, displayID: displayID)
@@ -161,6 +166,8 @@ enum OverbrightApplication {
                     displayID: displayID
                 )
                 let activeBrightness = brightnessService.read(displayID: displayID)
+                let wasActive = controller.state == .active
+                let usesOverlay = controller.effectiveMethod == .overlay
                 let controllerReportedRestore = controller.disable()
                 let restoredEndpoint = GammaTableService.readEndpoint(
                     displayID: displayID
@@ -168,8 +175,12 @@ enum OverbrightApplication {
                 let restoredBrightness = brightnessService.read(displayID: displayID)
                 controller.setLevel(previousLevel)
 
+                // The overlay method must leave the gamma table alone; the
+                // classic one raises it.
                 let boostWasApplied = activeEndpoint.map {
-                    $0 > baselineEndpoint + 0.01
+                    usesOverlay
+                        ? wasActive && abs($0 - baselineEndpoint) < 0.001
+                        : $0 > baselineEndpoint + 0.01
                 } ?? false
                 let baselineWasRestored = restoredEndpoint.map {
                     abs($0 - baselineEndpoint) < 0.025
@@ -188,7 +199,7 @@ enum OverbrightApplication {
                     backlightWasRaised && backlightWasRestored &&
                     controllerReportedRestore {
                     print(
-                        "SELFTEST PASS: gamma \(baselineEndpoint) -> " +
+                        "SELFTEST PASS (\(usesOverlay ? "overlay" : "classic")): gamma \(baselineEndpoint) -> " +
                         "\(activeEndpoint!) -> \(restoredEndpoint!); " +
                         "backlight \(baselineBrightness) -> " +
                         "\(activeBrightness!) -> \(restoredBrightness!)"

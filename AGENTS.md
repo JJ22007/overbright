@@ -4,7 +4,7 @@ Instructions for AI coding agents working in this repository. Humans are welcome
 
 ## What this is
 
-Overbright is a macOS menu bar app that raises a built-in XDR display above 100% brightness by opening EDR headroom and scaling the gamma table. It is intentionally small so that a person can fork it and have an agent reshape it into their own tool. Favor small, readable changes over abstractions.
+Overbright is a macOS menu bar app that raises a built-in XDR display above 100% brightness by opening EDR headroom and lifting ordinary content into it (a multiplying HDR layer on macOS 27.2+, the gamma table before). It is intentionally small so that a person can fork it and have an agent reshape it into their own tool. Favor small, readable changes over abstractions.
 
 - Language: Swift, built with Swift Package Manager. No Xcode project, no third-party dependencies. Keep it that way.
 - Minimum macOS: 13. Both arm64 and x86_64 must keep building.
@@ -20,14 +20,14 @@ bash scripts/install.sh          # tests, release build, install to ~/Applicatio
 bash scripts/package_release.sh  # universal zip in outputs/ (what CI and releases run)
 bash scripts/setup-signing.sh    # one-time: stable signing identity (the user runs this)
 bash scripts/brightness-log.sh --interval 50 --changes   # read-only live brightness readings
-bash scripts/brightness-check.sh                         # drive F1/F2 and measure every press
+bash scripts/light-check.sh                              # real keys, real light (camera); see below
 ```
 
 `scripts/test.sh` compiles `Sources/Overbright/Models/*.swift` together with `Tests/LogicTests/main.swift` into a plain executable. That is why everything in `Models/` must import only Foundation and must not touch AppKit, the display or `UserDefaults`. Add a check there whenever you add a config field, change a limit, or change key-step arithmetic.
 
 ## What you cannot verify yourself
 
-- **Real light.** No sensor on a Mac sees its own screen: the ambient light sensor ignores it, and the camera faces the user and needs their permission (do not use it). What you can measure exactly, read-only, is the backlight macOS is driving (`IOMFBBrightnessLevel` on the built-in framebuffer, in nits, live through every ramp), the standard luminance (CoreBrightness `DisplayNitsKey`), the EDR headroom (CoreBrightness `EDRHeadroom`) and the gamma table. `scripts/tools/BrightnessSampler.swift` turns those into an estimate of ordinary white; the model is explained there and in `BoostMethod`. Report results as estimates from that model, not as measured light. Never write CoreBrightness.
+- **Real light, without the user.** Only the camera sees it (see "Measuring brightness"), and the user has to agree to it and to a dark room. Never infer light from the backlight and gamma readings: that model was wrong on macOS 27.2 and passed its own checks anyway.
 
 - **External displays.** `overbright displays` and `overbright display <name> <percent>` reply after the DDC write finished, and the level can be read back independently. That is a real check of DDC, but only on a display that is actually connected; CI has none.
 - **The external display indicator.** `"$(swift build --show-bin-path)/Overbright" --preview-hud 70` shows it on the first external display for three seconds (pass a negative level to see extra dimming). Capture it with `screencapture -x -D 2 out.png` and look at the top-right corner.
@@ -40,13 +40,24 @@ Logs: `log stream --predicate 'subsystem == "io.github.overbright"'`. The last s
 
 ## Measuring brightness
 
-Use these instead of asking the user whether something looked brighter.
+Use these instead of asking the user whether something looked brighter. Never write CoreBrightness.
 
-- `scripts/brightness-log.sh` prints the readings and the white estimate every `--interval` ms (`--changes` for only changed rows, `--once` for one). Read-only; safe at any time.
-- `scripts/brightness-check.sh` changes the brightness, so run it only when the user expects that. It reads the starting position, drives `overbright key up|down` (the same code F1/F2 run, indicator included) through a scenario (`--scenario full|boost|native`), samples every 20 ms, captures the top quarter of the built-in screen about 5 times a second, then puts the display back. It writes `samples.tsv`, `events.tsv`, `frames/` (file names carry the time on the same clock) and `report.md` to `outputs/brightness-check/` (or `--out`). The report gives, per press: white before and after, time to 90% of the change, and whether it went the wrong way, overshot, or was slow (over 0.35 s). Exit code 1 if any press failed.
-- Posting synthetic media-key events from a shell does not reach macOS here (it needs its own permission), which is why the check drives `overbright key`. That covers everything after the key tap; the tap itself (`BrightnessKeyService`) still needs a real key press.
-- Look at the frames to check the indicator: exactly one, top centre, 16 segments, appearing within one frame of the press.
-- Leave the display as you found it. The check does; after anything else, `overbright set 100` and wait about 20 s for macOS to release EDR, then confirm with `brightness-log.sh --once` that the gamma endpoint is 1.000.
+- **`scripts/light-check.sh`: the real check.** It measures emitted light with the Mac's built-in camera while pressing real keys, and passes or fails. The camera faces the user, but the screen lights the user's face and the room, so in a dark room each frame's mean brightness follows the screen within a frame. It shows a black screen with a white patch (10% of the area) for about two minutes, then restores the display. The script runs `scripts/brightness-camera.sh`, which builds a small helper app ("Overbright Light Meter", `.build/BrightnessCamera.app`) so macOS asks for the camera once, for it alone. The helper keeps only numbers (mean luma per frame), never an image. Ask the user before the first run (camera permission, dark room, a couple of minutes of white patch).
+  - **Presses.** 10 × F2 then 10 × F1. For each press it reports the direction, the time to 90%, and any overshoot past start or end. A press fails if it moves the wrong way or overshoots by more than 3%.
+  - **Ratio.** A null test that does not depend on the camera's response. At boost X the white patch becomes a grey that emits 1/X of white, so the camera must read the same as plain white at the standard 100%. A level fails beyond ±5%.
+  - **Release.** The light for 24 s after leaving the boost, as information only.
+  - The camera's exposure cannot be locked on a MacBook. Only trust comparisons made within a few seconds of each other; that is why the ratio test is a null test.
+- **Real key presses.** `overbright key up|down --real [--control]` makes the running app post a brightness media key at the HID tap. It travels through macOS, Overbright's key tap and its handler, exactly like F1/F2. A shell cannot post one itself (it has no Accessibility). Without `--real`, `overbright key` calls the handler directly.
+- **`scripts/brightness-log.sh`: raw readings.** Read-only, safe at any time: backlight slider, standard nits, the backlight in nits macOS is driving (`IOMFBBrightnessLevel`, live through every ramp), EDR headroom and the gamma endpoint. None of these is emitted light.
+- **Facts measured on macOS 27.2.1 (14" MacBook Pro).**
+  - The gamma table has no effect on emitted light, with or without EDR. A table installed when EDR starts stops macOS from scaling ordinary content, so white goes to the full backlight.
+  - A full-screen EDR layer with `compositingFilter = "multiplyBlendMode"` multiplies emitted light exactly. A layer that is drawn once and left alone stops being composited with the filter after about a second and shows as an opaque sheet, so it must keep redrawing. Check this on a black screen, where the failure is obvious; on a white screen it looks like success.
+  - macOS dims ordinary white by about 9% once the backlight reaches its EDR peak, not during the ramp (`EDRWhiteCorrection`).
+  - A layer change takes about 0.15 s to show (0.4 s at 4 frames per second).
+  - The ambient light sensor does not see the screen.
+  - SMC `PBLR` is backlight power in watts. It is linear in nits below 100%, but it follows LED drive, not emitted light, so it cannot judge the boost.
+- **Indicator.** Capture the top of the screen right after `overbright key up --real` (`screencapture -x -R 0,0,<width>,280`). There must be exactly one indicator, top centre, 16 segments.
+- **Leave the display as you found it.** `light-check` does. After anything else, `overbright set 100` and wait about 20 s for macOS to release EDR, then check with `brightness-log.sh --once`.
 
 ## Layout of the code
 
@@ -56,7 +67,7 @@ All sources are in `Sources/Overbright/`.
 |---|---|
 | `Models/Config.swift` | `Config` and `Preset`: defaults, forgiving decoding, warnings, JSON output |
 | `Models/BoostLevel.swift` | `BoostLevel` (clamped level), `BoostCalibration` (percent → gamma factor), `BoostState`, `BoostSnapshot` |
-| `Models/BuiltInBrightnessScale.swift` | The 0–160% scale (steps, split into backlight and boost, segment fills), `BoostMethod`, `PanelCompensation` |
+| `Models/BuiltInBrightnessScale.swift` | The 0–160% scale (steps, split into backlight and boost, segment fills), `BoostMethod`, `EDRWhiteCorrection` |
 | `Models/BrightnessKeyStep.swift` | Boost-only key steps (menu slider, classic paths) |
 | `Models/BrightnessMediaKeyEvent.swift` | Decoding the system brightness-key events |
 | `Models/BacklightObservation.swift` | Tolerating brief backlight read failures |
@@ -64,10 +75,11 @@ All sources are in `Sources/Overbright/`.
 | `Models/ColorProfileIdentity.swift` | Telling a real color-profile change from a transient notification |
 | `Controllers/BoostController.swift` | The state machine: enable, disable, suspend/resume, recovery |
 | `Services/GammaTableService.swift` | Reading, scaling and restoring the gamma table |
-| `Services/EDRTriggerService.swift` | The invisible HDR layer that opens EDR headroom |
+| `Services/EDRTriggerService.swift` | The invisible HDR layer that opens EDR headroom (classic method) |
+| `Services/EDROverlayService.swift` | The full-screen multiplying HDR layer that is the boost on macOS 27.2+ |
 | `Services/DDCService.swift` | IOAVService I2C transport (Apple Silicon, loaded with dlsym) and endpoint discovery |
 | `Services/ExternalDisplayManager.swift` | External displays: detection, DDC/macOS/software choice, coalesced writes, software dimming |
-| `Services/PanelLightService.swift` | Read-only live backlight nits and standard nits for the panel method |
+| `Services/PanelLightService.swift` | Read-only live backlight nits and the panel's peak, for `EDRWhiteCorrection` |
 | `Services/NativeBrightnessService.swift` | Reading and writing the system backlight level |
 | `Services/BrightnessKeyService.swift` | The event tap for F1/F2; the only code that needs Accessibility |
 | `Services/ConfigStore.swift` | Loads `config.json`, creates it on first run, hot reloads |
@@ -84,13 +96,13 @@ All sources are in `Sources/Overbright/`.
 
 ## Conventions that matter
 
-- **Always restore.** Every path that changes the gamma table or the backlight must have a path that puts it back, including on quit, SIGTERM, sleep, a color-profile change and a crash (the `recoveryRequired` marker in `UserDefaults`). If you add a way to turn the boost on, check how it turns off in each of those cases.
+- **Always restore.** Every path that changes the gamma table, the backlight or the overlay must have a path that puts it back, including on quit, SIGTERM, sleep, a color-profile change and a crash (the `recoveryRequired` marker in `UserDefaults`). If you add a way to turn the boost on, check how it turns off in each of those cases.
 - **Never fight the system.** If macOS or the user lowers the backlight, follow it. Do not write the backlight back to 100% from a timer. Do not disable auto-brightness.
 - **External displays: brightness only.** DDC/CI can change many monitor settings (input, power, factory reset). Overbright writes VCP 0x10 and nothing else. Keep it that way unless the user asks for a specific feature, and never send a write you have not read back first on real hardware.
 - **Never call `CGDisplayRestoreColorSyncSettings` for an external display.** It resets every display, including the built-in boost. `SoftwareDimmer` restores from its own baseline.
 - **One scale, one indicator.** With the key tap running, Overbright handles every plain F1/F2 for the built-in display (`AppDelegate.handleBuiltInKey` → `BoostController.stepScale`) and swallows it, so macOS never shows its own indicator as well. Without the tap, macOS keeps the keys. Do not reintroduce a path where both indicators can appear.
-- **Panel method: the table only takes light away.** On macOS 27.2+ an app's gamma table reaches the panel without macOS's EDR scaling (evidence: a table of 1.01 jumped white to the backlight's peak; after restoring an explicit identity table, white stayed bright until the backlight came down about 17 s later). So in `.panel` the endpoint is wanted nits ÷ live backlight nits, never above 1, tracked at 120 Hz with a predicted backlight while it ramps. On leaving the boost, keep compensating (`settling`) until the backlight is back where it was before the boost; hand the table back through ColorSync if another app still holds EDR. Measure any change here with `brightness-check.sh`.
-- **Never exceed the reported headroom.** In `.classic` the gamma factor is capped by `maximumExtendedDynamicRangeColorComponentValue` at the moment of applying; in `.panel` the endpoint never goes above 1, so the panel is never asked for more than the backlight macOS is driving. `BoostLevel.maximum` (160%) and `BoostCalibration` are the calibrated safety envelope: do not raise them to make the screen "brighter". A user-facing ceiling belongs in `maxLevel`, which can only lower it.
+- **Overlay method: never write the gamma table.** On macOS 27.2+ the boost is `EDROverlayService` alone (see the measured facts above). Writing any table, even an identity one, while EDR starts makes white jump to the full backlight. Measure any change to the boost with `light-check.sh`, and look at a black screen too.
+- **Never exceed the reported headroom.** In `.classic` the gamma factor is capped by `maximumExtendedDynamicRangeColorComponentValue` at the moment of applying; in `.overlay` the multiplier is limited by the same headroom, which macOS applies to the layer. `BoostLevel.maximum` (160%) and `BoostCalibration` are the calibrated safety envelope: do not raise them to make the screen "brighter". A user-facing ceiling belongs in `maxLevel`, which can only lower it.
 - **The config file is the single source of truth for settings** (`~/.config/overbright/config.json`). Do not add a second settings store. `UserDefaults` holds only runtime state: the last level and the recovery markers.
 - **Config must stay forgiving.** Every field is optional. A bad entry produces a warning in `Config.warnings` and falls back to its default; it must never crash the app or block the rest of the file. Unreadable JSON keeps the previous settings.
 - **`Models/` stays pure.** Foundation only, no side effects, covered by `Tests/LogicTests/main.swift`.

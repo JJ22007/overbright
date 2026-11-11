@@ -42,7 +42,7 @@ struct Config: Equatable {
     /// and the picture is darkened in software, down to -90%.
     var extraDimming: Bool = true
     /// How the boost brightens the built-in display: "auto" picks by macOS
-    /// version, "panel" or "classic" force one. See `BoostMethod`.
+    /// version, "overlay" or "classic" force one. See `BoostMethod`.
     var boostMethod: String = "auto"
     var presets: [Preset] = []
 
@@ -101,7 +101,7 @@ struct Config: Equatable {
             if let value = (raw as? String)?.lowercased(), options.contains(value) {
                 boostMethod = value
             } else {
-                warnings.append("\"boostMethod\" must be \"auto\", \"panel\" or \"classic\"; using \"auto\"")
+                warnings.append("\"boostMethod\" must be \"auto\", \"overlay\" or \"classic\"; using \"auto\"")
             }
         }
 

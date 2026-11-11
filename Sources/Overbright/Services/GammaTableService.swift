@@ -76,13 +76,15 @@ final class GammaTableService {
         return true
     }
 
-    /// Scales the baseline by an exact factor, below 1 as well as above. Used by
-    /// the panel method, which darkens ordinary content on a brighter backlight.
+    /// Never scale the picture below this; protects against a bad value.
+    static let minimumExactFactor: Float = 0.05
+
+    /// Scales the baseline by an exact factor, below 1 as well as above.
     @discardableResult
     func apply(exactFactor proposed: Float) -> Bool {
         guard var table = baseline, let displayID else { return false }
         let factor = proposed.isFinite
-            ? min(max(proposed, PanelCompensation.minimumFactor), BoostLevel.maximum)
+            ? min(max(proposed, Self.minimumExactFactor), BoostLevel.maximum)
             : 1
         for index in table.red.indices {
             table.red[index] *= factor

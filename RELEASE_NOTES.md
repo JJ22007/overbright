@@ -10,9 +10,9 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 ## Unreleased
 
 - **One brightness scale, one indicator.** F1/F2 move along a single 0–160% scale on the built-in display: the backlight up to 100%, the boost above. Overbright shows one indicator for all of it (top centre, 16 segments) instead of macOS's below 100% and its own above.
-- **Boost fixed for macOS 27.2.** macOS 27.2 stopped scaling ordinary content when an app sets a gamma table, so the boost jumped to full brightness at 101%, barely changed between 100 and 160%, looked washed out, and took 15–20 s to come back down. The new panel method follows the live backlight and keeps every step prompt: measured, each press reaches 90% of its change in about 0.02 s, and 160→100 is immediate. `"boostMethod"` can force the old behaviour.
-- **Measuring tools** for contributors and agents: `scripts/brightness-log.sh` and `scripts/brightness-check.sh`.
-- `overbright key up|down`, `set` and `up`/`down` across the whole scale, and `scale`, `scaleTop`, `boostMethod` in `status --json`.
+- **Boost fixed for macOS 27.2.** On macOS 27.2 the gamma table no longer changes the light the built-in panel emits, and a table installed when HDR starts makes white jump to the full backlight. That is why the boost jumped at 101%, did not change between 100 and 160%, and stayed bright for 15 s after going back to 100%. The boost now uses a full-screen HDR layer that multiplies the picture by the boost level and never touches the gamma table. Measured with the Mac's camera and real key presses: every F1/F2 press changes the light the right way, reaching 90% in 0.3–0.65 s; 106%, 125% and 160% are within 0.3% of 1.06, 1.25 and 1.6 × the standard white; entering the boost flashes at most 3%. One limit is macOS's: after leaving the boost, white sits about 7% below standard for ~13 s until macOS lowers the backlight. `"boostMethod"` can force the old gamma method (`"classic"`).
+- **Measuring tools** for contributors and agents: `scripts/light-check.sh` measures real light with the camera while pressing real keys; `scripts/brightness-log.sh` prints the raw readings.
+- `overbright key up|down [--real]` (`--real` posts an actual key press through macOS), `set` and `up`/`down` across the whole scale, and `scale`, `scaleTop`, `boostMethod` in `status --json`.
 
 ## 2.2
 

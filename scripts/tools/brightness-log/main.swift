@@ -5,7 +5,6 @@ setvbuf(stdout, nil, _IOLBF, 0)
 var interval = 0.1
 var duration = Double.infinity
 var changesOnly = false
-var model = BrightnessSampler.Model.panel
 var arguments = CommandLine.arguments.dropFirst().makeIterator()
 while let argument = arguments.next() {
     switch argument {
@@ -13,13 +12,12 @@ while let argument = arguments.next() {
     case "--duration": duration = Double(arguments.next() ?? "") ?? .infinity
     case "--changes": changesOnly = true
     case "--once": duration = 0
-    case "--model": model = BrightnessSampler.Model(rawValue: arguments.next() ?? "") ?? .panel
     default:
-        FileHandle.standardError.write(Data("usage: brightness-log [--interval ms] [--duration s] [--changes] [--once] [--model panel|classic]\n".utf8))
+        FileHandle.standardError.write(Data("usage: brightness-log [--interval ms] [--duration s] [--changes] [--once]\n".utf8))
         exit(2)
     }
 }
-guard let sampler = BrightnessSampler(model: model) else { print("no built-in display"); exit(1) }
+guard let sampler = BrightnessSampler() else { print("no built-in display"); exit(1) }
 print(BrightnessSample.header.joined(separator: "\t"))
 let start = Date()
 var last: [String]?

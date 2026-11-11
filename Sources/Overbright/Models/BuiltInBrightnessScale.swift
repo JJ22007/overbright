@@ -80,75 +80,52 @@ enum BuiltInBrightnessScale {
 ///
 /// macOS drives the panel's backlight up to its peak (1600 nits on a 14"/16"
 /// MacBook Pro) as soon as anything on screen asks for EDR, and normally scales
-/// ordinary content back down so it looks unchanged. Where that scaling happens
-/// differs between macOS versions:
+/// ordinary content back down so it looks unchanged.
 ///
 /// - `.classic` (up to macOS 27.1): the scaling is applied after the gamma
 ///   table, so a table above 1.0 lifts ordinary content into the headroom.
 ///   160% is a table endpoint of about 1.6.
-/// - `.panel` (macOS 27.2 and later): once an app sets a gamma table, the table
-///   reaches the panel without that scaling. Ordinary white is then the panel's
-///   full backlight, so the table must scale it down to the wanted brightness:
-///   endpoint = wanted nits ÷ live panel nits, always at or below 1.0.
+/// - `.overlay` (macOS 27.2 and later): the gamma table no longer changes the
+///   emitted light at all, and a table that is installed when EDR starts stops
+///   macOS's scaling, so white jumps to the full backlight. Measured with a
+///   camera. Instead a full-screen EDR layer multiplies everything under it by
+///   the boost level (1.0-1.6) and no table is ever written.
 enum BoostMethod: String, CaseIterable {
     case classic
-    case panel
+    case overlay
 
     /// The method for a macOS version, used when the config says "auto".
     static func automatic(major: Int, minor: Int) -> BoostMethod {
-        (major, minor) >= (27, 2) ? .panel : .classic
+        (major, minor) >= (27, 2) ? .overlay : .classic
     }
 }
 
-/// Arithmetic for `.panel`: keep ordinary white at a target luminance while the
-/// panel's backlight moves underneath it.
-enum PanelCompensation {
-    /// Never scale the picture below this; protects against a bad reading.
-    static let minimumFactor: Float = 0.05
+/// macOS 27.2 draws ordinary white about 9% dimmer once the backlight has
+/// reached its EDR peak (MacBook Pro; measured with a camera: ×1.08 reads just
+/// under the standard white, ×1.10 just over). While the backlight is still
+/// ramping up it does not, so the correction has to follow the backlight: none
+/// during the ramp, then eased in over `duration` as the backlight arrives.
+/// macOS starts dimming as the backlight reaches its peak and a change to the
+/// layer takes about 0.15 s to show, so the correction starts a little before
+/// the peak (the ramp's last ~70 ms).
+struct EDRWhiteCorrection {
+    static let full: Double = 1.09
+    static let delay: Double = 0
+    static let duration: Double = 0.25
+    static let nearPeak: Double = 0.93
 
-    /// Ordinary white for a boost level on top of the standard luminance.
-    static func targetNits(standardNits: Double, level: Double) -> Double {
-        standardNits * level
+    /// Whether the backlight counts as (about to be) at its peak. Without a
+    /// known peak, a backlight well above any standard level counts.
+    static func isAtPeak(panelNits: Double, peakNits: Double?) -> Bool {
+        if let peakNits { return panelNits >= peakNits * nearPeak }
+        return panelNits >= 1450
     }
 
-    /// The gamma endpoint that turns `panelNits` of backlight into `targetNits`
-    /// of white. Capped at 1.0: the table can only take light away, so a panel
-    /// that is still ramping up simply shows its full backlight.
-    static func factor(targetNits: Double, panelNits: Double) -> Float {
-        guard targetNits.isFinite, panelNits.isFinite, panelNits > 0, targetNits > 0 else { return 1 }
-        return Float(min(max(targetNits / panelNits, Double(minimumFactor)), 1))
-    }
-
-    /// Where the backlight will be `lead` seconds from now if it keeps ramping
-    /// at the rate between two readings. macOS ramps the backlight
-    /// exponentially (about 7% per 50 ms into EDR), so the rate is a ratio.
-    /// Compensating for the predicted value instead of the last reading keeps
-    /// white from overshooting while the ramp runs.
-    static func predictedPanelNits(previous: Double, current: Double, interval: Double, lead: Double) -> Double {
-        guard previous > 0, current > 0, interval > 0.001, lead > 0 else { return current }
-        let rate = log(current / previous) / interval
-        // Never extrapolate more than one reading's worth of change.
-        let step = min(max(rate * lead, -abs(log(current / previous))), abs(log(current / previous)))
-        return current * exp(step)
-    }
-
-    /// The estimated luminance of ordinary white while Overbright's table is
-    /// installed: the backlight times the table's endpoint.
-    static func whiteNits(panelNits: Double, gammaEndpoint: Double) -> Double {
-        panelNits * min(max(gammaEndpoint, 0), 1)
-    }
-
-    /// The panel is back where it was before the boost, so the original table
-    /// can go back. That is the standard backlight, or higher when another app
-    /// was already showing EDR content before the boost and still is.
-    static func isSettled(panelNits: Double, standardNits: Double, beforeBoostNits: Double? = nil) -> Bool {
-        panelNits <= max(standardNits, beforeBoostNits ?? standardNits) * 1.01 + 0.5
-    }
-
-    /// Whether the backlight is still above the standard one when the original
-    /// table goes back. Then macOS's own EDR scaling has to take over, which it
-    /// only does for the system's table, not for one an app sets explicitly.
-    static func needsSystemScaling(panelNits: Double, standardNits: Double) -> Bool {
-        panelNits > standardNits * 1.01 + 0.5
+    /// The correction `elapsed` seconds after the backlight got near its peak,
+    /// or 1 while it has not.
+    static func value(sincePeak elapsed: Double?) -> Double {
+        guard let elapsed, elapsed >= delay else { return 1 }
+        let progress = min((elapsed - delay) / duration, 1)
+        return 1 + (full - 1) * progress
     }
 }

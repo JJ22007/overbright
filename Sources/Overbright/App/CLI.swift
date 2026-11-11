@@ -37,6 +37,9 @@ enum CLI {
       overbright up | down           one step along that scale
       overbright key up|down [--fine]
                                      exactly what F1/F2 do, indicator included
+      overbright key up|down --real [--control]
+                                     post a real brightness key press, which
+                                     travels through macOS and the key tap
       overbright preset <name>       apply a preset from the config
       overbright presets             list the presets
       overbright displays            list external displays and how each is controlled
@@ -254,6 +257,23 @@ final class CommandServer {
             guard let which = arguments.dropFirst().first(where: { !$0.hasPrefix("--") }),
                   which == "up" || which == "down" else {
                 finish(2, "error: key needs up or down")
+                return
+            }
+            if arguments.contains("--real") {
+                // The press goes out at the HID tap, so it reaches this app's
+                // own key tap, and macOS after it, the way a keyboard's does.
+                guard brightnessKeyService.isRunning else {
+                    finish(1, "error: the brightness key tap is not running (Accessibility permission, or brightnessKeys is off)")
+                    return
+                }
+                BrightnessKeyService.postMediaKey(
+                    which == "up" ? .increase : .decrease,
+                    control: arguments.contains("--control"),
+                    fineGrained: fine
+                )
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    self?.settle(finish)
+                }
                 return
             }
             guard keyHandler?(which == "up" ? .increase : .decrease, fine) != nil else {

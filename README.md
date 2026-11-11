@@ -119,7 +119,7 @@ The config lives at `~/.config/overbright/config.json`. Open it from the menu wi
 | `externalDisplays` | `true` | Show external displays in the menu and control their brightness. |
 | `externalKeys` | `true` | Control+F1/F2 adjust external displays. Needs `brightnessKeys` and the Accessibility permission. |
 | `showHUD` | `true` | Show a brightness indicator on an external display while it changes. |
-| `boostMethod` | `"auto"` | How the boost brightens the built-in display: `"panel"` (macOS 27.2 and later) or `"classic"` (earlier). `"auto"` picks by macOS version; force one only if the boost looks wrong. See [How it works](#how-it-works). |
+| `boostMethod` | `"auto"` | How the boost brightens the built-in display: `"overlay"` (macOS 27.2 and later) or `"classic"` (earlier). `"auto"` picks by macOS version; force one only if the boost looks wrong. See [How it works](#how-it-works). |
 | `extraDimming` | `true` | Let external displays go below 0%, down to −90%, by darkening the picture once the backlight is at its minimum. |
 | `presets` | `[]` | Named levels: `name` and `level` (100 to 160). They appear in the menu and work with `overbright preset`. |
 
@@ -175,7 +175,7 @@ overbright status --json
   "presets" : [],
   "scale" : 125,
   "scaleTop" : 160,
-  "boostMethod" : "panel",
+  "boostMethod" : "overlay",
   "state" : "on",
   "supported" : true,
   "version" : "2.0"
@@ -235,9 +235,9 @@ Prefer to do it by hand? Each file has one job:
 
 ## How it works
 
-macOS gives an XDR display brightness "headroom" above standard white only while something on screen is HDR. Overbright keeps a tiny, invisible HDR layer on the built-in display so that headroom opens. macOS then drives the backlight up to its peak (1600 nits on a MacBook Pro) and normally scales ordinary content back down so it looks unchanged. Overbright uses the gamma table to let ordinary white take part of that light. How depends on the macOS version (`boostMethod`):
+macOS gives an XDR display brightness "headroom" above standard white only while something on screen is HDR. Overbright keeps a tiny, invisible HDR layer on the built-in display so that headroom opens. macOS then drives the backlight up to its peak (1600 nits on a MacBook Pro) and normally scales ordinary content back down so it looks unchanged. Overbright lets ordinary white take part of that light. How depends on the macOS version (`boostMethod`):
 
-- **panel** (macOS 27.2 and later). Once an app sets a gamma table, macOS no longer scales ordinary content down, so white would jump straight to the full backlight. Overbright reads the backlight macOS is actually driving, live, and sets the table to *wanted brightness ÷ backlight*: 100% on a 1600-nit backlight is 0.375, 160% is 0.6. The table never goes above 1, so nothing clips. It follows every ramp of the backlight at 120 Hz, which is why leaving the boost is immediate and entering it never overshoots. When the boost ends, the table keeps white at standard brightness until macOS has brought the backlight back down, then hands the original table back.
+- **overlay** (macOS 27.2 and later). The gamma table no longer changes the light the panel emits, so Overbright puts a full-screen HDR layer over the built-in display that multiplies everything under it by the boost level: 160% multiplies by 1.6. Black stays black. The layer is invisible to screenshots and recordings and never takes clicks. In HDR mode macOS draws ordinary white about 9% dimmer once the backlight reaches its peak, so the layer adds that back as the backlight arrives; a percentage is therefore relative to the real standard white. No gamma table is written.
 - **classic** (earlier macOS). macOS scales ordinary content after the gamma table, so a table above 1 lifts white into the headroom: 160% is a table endpoint of about 1.6, capped by the headroom macOS reports.
 
 The percentage is a request on top of standard white (600 nits at full backlight): 160% asks for about 960 nits.
@@ -247,11 +247,11 @@ Before changing anything, Overbright records the display's original state, and i
 ## Limits and cautions
 
 - **The percentage is not a measurement.** 160% is a requested boost, not 1,600 nits. Peak HDR brightness is not sustainable across the full screen.
-- **How the boost was measured.** No sensor on a Mac sees its own screen, so `scripts/brightness-check.sh` estimates white from two exact readings, the live backlight and the gamma table (see [AGENTS.md](AGENTS.md)). The panel method rests on that model; if the boost ever looks wrong on your macOS, try `"boostMethod": "classic"`.
-- **Quitting during the 15-second hold.** If you quit Overbright right after leaving the boost, the original table goes back at once while macOS may still be holding the backlight at its peak, so the screen can look brighter for up to about 15 seconds.
+- **How the boost was measured.** With the Mac's own camera, in a dark room, while pressing real keys: `scripts/light-check.sh` (see [AGENTS.md](AGENTS.md)). The camera sees the screen's light on the room; the levels are checked with a null test that does not depend on the camera. Measured on a 14" MacBook Pro with macOS 27.2.1; the 9% correction may differ on other models.
+- **Slightly dim for ~13 s after the boost.** macOS keeps HDR mode on for about 15 s after the boost ends, and meanwhile draws ordinary white about 7% below standard. Then it lowers the backlight and white returns to standard over about 2 seconds. Overbright cannot correct this without keeping HDR mode on.
 - **Brighter means warmer.** Higher brightness uses more power and makes more heat. macOS may dim the display on its own; Overbright does not override that.
 - **Don't run two of these at once.** BetterDisplay, BrightIntosh, Lunar, f.lux and similar tools also change the gamma table. Overbright refuses to turn on when it detects an already boosted table.
-- **Not for color-critical work.** Scaling the gamma table can clip highlight detail in HDR photos and video. Restore standard brightness first.
+- **Not for color-critical work.** The boost can clip highlight detail in HDR photos and video. Restore standard brightness first.
 - **External displays get dimmer and brighter, not overbright.** Going past 100% needs EDR headroom, which only the built-in XDR display has. An external display goes up to its own maximum.
 - **DDC/CI is a conversation with the monitor.** Most answer; some answer slowly, and a few behind docks or adapters do not answer at all and fall back to software dimming. Overbright never writes anything except brightness.
 - **Tested on a limited set of Macs.** CI runs the hardware-independent tests and builds both architectures. It cannot test a real panel.

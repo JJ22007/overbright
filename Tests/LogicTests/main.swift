@@ -368,55 +368,28 @@ expect(BuiltInBrightnessScale.backlightDropEndsBoost(previous: 1, current: 0.5),
 expect(!BuiltInBrightnessScale.backlightDropEndsBoost(previous: 1, current: 0.97), "a tiny backlight wobble keeps the boost")
 expect(!BuiltInBrightnessScale.backlightDropEndsBoost(previous: 0.5, current: 0.9), "a backlight rise never ends the boost")
 
-// MARK: Boost method and panel compensation
+// MARK: Boost method
 
-expect(BoostMethod.automatic(major: 27, minor: 2) == .panel, "macOS 27.2 uses panel compensation")
-expect(BoostMethod.automatic(major: 28, minor: 0) == .panel, "later macOS uses panel compensation")
+expect(BoostMethod.automatic(major: 27, minor: 2) == .overlay, "macOS 27.2 uses the multiply overlay")
+expect(BoostMethod.automatic(major: 28, minor: 0) == .overlay, "later macOS uses the multiply overlay")
 expect(BoostMethod.automatic(major: 27, minor: 1) == .classic, "macOS 27.1 keeps the classic gamma boost")
 expect(BoostMethod.automatic(major: 15, minor: 6) == .classic, "older macOS keeps the classic gamma boost")
 expect(parsed(#"{"boostMethod": "classic"}"#).resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 27, minorVersion: 2, patchVersion: 1)) == .classic,
        "the config can force the classic method")
-expect(parsed("{}").resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 27, minorVersion: 2, patchVersion: 1)) == .panel,
-       "auto picks the panel method on macOS 27.2")
+expect(parsed(#"{"boostMethod": "overlay"}"#).resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)) == .overlay,
+       "the config can force the overlay method")
+expect(parsed("{}").resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 27, minorVersion: 2, patchVersion: 1)) == .overlay,
+       "auto picks the overlay on macOS 27.2")
 expect(parsed(#"{"boostMethod": "bright"}"#).warnings.count == 1, "an unknown boost method warns")
-expect(PanelCompensation.factor(targetNits: 600, panelNits: 1600) == 0.375,
-       "100% on a 1600-nit backlight scales white down to 600 nits")
-expect(abs(PanelCompensation.factor(targetNits: 960, panelNits: 1600) - 0.6) < 0.0001,
-       "160% stays below a table endpoint of 1, so nothing clips")
-expect(PanelCompensation.factor(targetNits: 960, panelNits: 600) == 1,
-       "a panel still ramping up is shown at full, never above")
-expect(PanelCompensation.factor(targetNits: 600, panelNits: 0) == 1, "a missing reading changes nothing")
-expect(PanelCompensation.factor(targetNits: 1, panelNits: 1600) == PanelCompensation.minimumFactor,
-       "the picture is never scaled to black")
-expect(PanelCompensation.targetNits(standardNits: 600, level: 1.25) == 750, "125% of 600 nits is 750 nits")
-expect(PanelCompensation.whiteNits(panelNits: 1600, gammaEndpoint: 0.375) == 600, "white is backlight times endpoint")
-expect(PanelCompensation.whiteNits(panelNits: 1600, gammaEndpoint: 1.59) == 1600,
-       "an endpoint above 1 clips at the full backlight (the macOS 27.2 washed-out bug)")
-expect(PanelCompensation.isSettled(panelNits: 603, standardNits: 600), "within 1% the panel has settled")
-expect(!PanelCompensation.isSettled(panelNits: 900, standardNits: 600), "a panel still in EDR has not settled")
-expect(PanelCompensation.isSettled(panelNits: 721, standardNits: 600, beforeBoostNits: 720),
-       "another app's EDR from before the boost does not keep Overbright holding on")
-expect(!PanelCompensation.isSettled(panelNits: 1600, standardNits: 600, beforeBoostNits: 720),
-       "the boost's own EDR peak still has to come down")
-expect(PanelCompensation.predictedPanelNits(previous: 1600, current: 1600, interval: 0.008, lead: 0.02) == 1600,
-       "a steady backlight is predicted to stay")
-let rising = PanelCompensation.predictedPanelNits(previous: 700, current: 720, interval: 0.008, lead: 0.008)
-expect(rising > 720 && rising <= 740.6, "a rising backlight is predicted one step ahead, no further")
-let falling = PanelCompensation.predictedPanelNits(previous: 1000, current: 990, interval: 0.008, lead: 0.004)
-expect(falling < 990 && falling > 980, "a falling backlight is predicted to keep falling")
-expect(PanelCompensation.needsSystemScaling(panelNits: 720, standardNits: 600),
-       "handing back above the standard backlight needs macOS's own scaling")
-expect(!PanelCompensation.needsSystemScaling(panelNits: 602, standardNits: 600),
-       "at the standard backlight the original table can go back as it was")
-var nits = 600.0
-var lastWhite = 0.0
-var steadyWhite = true
-for panel in stride(from: 600.0, through: 1600, by: 50) {
-    nits = PanelCompensation.whiteNits(panelNits: panel, gammaEndpoint: Double(PanelCompensation.factor(targetNits: 750, panelNits: panel)))
-    if nits < lastWhite - 0.001 || nits > 750.001 { steadyWhite = false }
-    lastWhite = nits
-}
-expect(steadyWhite && abs(nits - 750) < 0.001, "while the backlight ramps up, white rises to the target and never overshoots")
+expect(parsed(#"{"boostMethod": "panel"}"#).warnings.count == 1, "the withdrawn panel method warns")
+expect(EDRWhiteCorrection.value(sincePeak: nil) == 1, "no correction while the backlight ramps up")
+expect(EDRWhiteCorrection.value(sincePeak: 0) == 1, "no correction yet as the backlight nears its peak")
+expect(abs(EDRWhiteCorrection.value(sincePeak: 0.125) - 1.045) < 0.0001, "half way through, half the correction")
+expect(EDRWhiteCorrection.value(sincePeak: 2) == EDRWhiteCorrection.full, "the full correction once macOS has dimmed white")
+expect(EDRWhiteCorrection.isAtPeak(panelNits: 1599, peakNits: 1600), "1599 of 1600 nits is the peak")
+expect(EDRWhiteCorrection.isAtPeak(panelNits: 1500, peakNits: 1600), "the last ~70 ms of the ramp count, for the layer's latency")
+expect(!EDRWhiteCorrection.isAtPeak(panelNits: 1300, peakNits: 1600), "a backlight still ramping is not")
+expect(!EDRWhiteCorrection.isAtPeak(panelNits: 722, peakNits: nil), "without a known peak, a standard level is not")
 
 if failureCount > 0 {
     exit(1)

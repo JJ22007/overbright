@@ -66,9 +66,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusController?.renderExternal(display)
         }
         externalDisplays.displaysDidChange()
-        boostController.onColorSyncReset = { [weak externalDisplays] in
-            externalDisplays?.reapplySoftwareDimmingNow()
-        }
 
         brightnessKeyService.isEnabled = ConfigStore.shared.config.brightnessKeys
 
