@@ -149,7 +149,36 @@ final class EDROverlayService {
     private var view: MultiplyView?
     private(set) var multiplier: Float = 1
 
-    var isShowing: Bool { window?.isVisible ?? false }
+    var isShowing: Bool { window != nil && (window?.isVisible == true || hiddenForTransition) }
+
+    /// Hides the layer while macOS draws a Spaces or Mission Control
+    /// transition, which would show it as a white sheet.
+    private let transitions = SpaceTransitionWatcher()
+    var transitionDiagnostics: [String: Any] {
+        [
+            "tap": transitions.tapRunning,
+            "hides": transitions.hideCount,
+            "events": Dictionary(uniqueKeysWithValues: transitions.eventCounts.map { (String($0.key), $0.value) }),
+        ]
+    }
+    private var hiddenForTransition = false
+
+    private func transitionChanged(_ transitioning: Bool) {
+        guard let window else { return }
+        if transitioning {
+            hiddenForTransition = true
+            window.orderOut(nil)
+        } else {
+            hiddenForTransition = false
+            window.alphaValue = 0
+            window.orderFrontRegardless()
+            view?.show(Double(multiplier))
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.3
+                window.animator().alphaValue = 1
+            }
+        }
+    }
 
     /// Longest gap between redraws while showing (see `MultiplyView.maxFrameGap`).
     var maxFrameGap: TimeInterval { view?.maxFrameGap ?? 0 }
@@ -162,7 +191,11 @@ final class EDROverlayService {
         stop()
         guard let view = MultiplyView(size: screen.frame.size) else { return false }
         let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false, screen: screen)
-        window.level = .screenSaver
+        // Above everything, at the level of the system's own recording
+        // indicator. At `.screenSaver` the window took part in Spaces and
+        // Mission Control transitions, which draw it without the multiply: a
+        // white sheet over the whole screen while switching.
+        window.level = NSWindow.Level(rawValue: Int(CGShieldingWindowLevel()))
         window.collectionBehavior = [.stationary, .canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         window.animationBehavior = .none
         window.backgroundColor = .clear
@@ -176,6 +209,9 @@ final class EDROverlayService {
         window.contentView = view
         window.setFrame(screen.frame, display: false)
         window.orderFrontRegardless()
+        hiddenForTransition = false
+        transitions.onChange = { [weak self] in self?.transitionChanged($0) }
+        transitions.start()
         self.window = window
         self.view = view
         activity = ProcessInfo.processInfo.beginActivity(
@@ -277,6 +313,9 @@ final class EDROverlayService {
     }
 
     func stop() {
+        transitions.stop()
+        transitions.onChange = nil
+        hiddenForTransition = false
         trackingTimer?.invalidate()
         trackingTimer = nil
         peakReachedAt = nil

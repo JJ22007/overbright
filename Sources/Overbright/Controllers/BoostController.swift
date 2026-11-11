@@ -81,6 +81,7 @@ final class BoostController {
     /// Longest gap between boost-layer redraws while it is up (overlay method).
     var overlayMaxFrameGap: TimeInterval { overlay.maxFrameGap }
     var mainThreadMaxGap: TimeInterval { overlay.mainThreadMaxGap }
+    var transitionDiagnostics: [String: Any] { overlay.transitionDiagnostics }
 
     private(set) var state: BoostState = .off
     private(set) var level: BoostLevel
