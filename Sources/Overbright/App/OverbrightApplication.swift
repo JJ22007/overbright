@@ -15,6 +15,14 @@ enum OverbrightApplication {
 
         let application = NSApplication.shared
 
+        // Development aid: `Overbright --preview-hud <level>` shows the external
+        // display indicator on every external display for a few seconds, so its
+        // look can be checked without pressing keys.
+        if let index = CommandLine.arguments.firstIndex(of: "--preview-hud") {
+            previewHUD(application: application, arguments: Array(CommandLine.arguments[(index + 1)...]))
+            return
+        }
+
         if CommandLine.arguments.contains("--hardware-self-test") {
             runHardwareSelfTest(application: application)
             return
@@ -25,6 +33,36 @@ enum OverbrightApplication {
         application.delegate = delegate
         application.setActivationPolicy(.accessory)
         application.run()
+    }
+
+    @MainActor
+    private static func previewHUD(application: NSApplication, arguments: [String]) {
+        application.setActivationPolicy(.accessory)
+        let level = arguments.first.flatMap(Double.init) ?? 70
+        let hud = BrightnessHUD()
+        let ids = ExternalDisplayManager.onlineExternalDisplays().map(\.id)
+        guard let id = ids.first else {
+            fputs("no external display\n", stderr)
+            Darwin.exit(1)
+        }
+        let display = ExternalDisplay(
+            id: id,
+            name: ExternalDisplayManager.screen(for: id)?.localizedName ?? "Display",
+            control: .ddc,
+            level: level,
+            minimum: ExternalBrightness.extraDimMinimum
+        )
+        hud.show(display)
+        // Step once while visible, so the animated path is exercised too.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            var next = display
+            next.level = ExternalBrightness.next(
+                from: level, direction: .decrease, step: 6.25, minimum: display.minimum
+            )
+            hud.show(next)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { Darwin.exit(0) }
+        withExtendedLifetime(hud) { application.run() }
     }
 
     @MainActor

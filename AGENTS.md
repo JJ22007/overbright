@@ -27,6 +27,7 @@ bash scripts/setup-signing.sh    # one-time: stable signing identity (the user r
 
 - **Real brightness.** Whether the panel actually got brighter can only be judged by a person looking at an XDR display. `overbright status --json` tells you the state machine reached `on` and what headroom macOS reports; it does not measure light. Say this plainly instead of claiming a visual change was tested.
 - **External displays.** `overbright displays` and `overbright display <name> <percent>` reply after the DDC write finished, and the level can be read back independently. That is a real check of DDC, but only on a display that is actually connected; CI has none.
+- **The external display indicator.** `"$(swift build --show-bin-path)/Overbright" --preview-hud 70` shows it on the first external display for three seconds (pass a negative level to see extra dimming). Capture it with `screencapture -x -D 2 out.png` and look at the top-right corner.
 - **F1/F2.** Intercepting brightness keys needs the Accessibility permission, which only the user can grant in System Settings. The grant is tied to the code signature: with an ad-hoc signature every rebuild invalidates it while the switch can still look on. `scripts/setup-signing.sh` fixes this by creating a local self-signed identity; it writes to the user's login keychain, so ask the user to run it rather than running it yourself. Never try to grant the permission yourself.
 - **Other Mac models.** CI has no XDR panel.
 
