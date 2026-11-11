@@ -1,80 +1,97 @@
 import AppKit
-import MetalKit
+import Metal
+import QuartzCore
 
 /// A full-screen EDR layer that multiplies everything under it by one value.
 /// Above 1.0 it lifts ordinary content into the EDR headroom; at 1.0 it leaves
 /// the picture exactly as it was. This is the boost on macOS 27.2 and later,
 /// where the gamma table no longer changes the light the panel emits (measured
 /// with a camera; see AGENTS.md, "Measuring brightness").
-private final class MultiplyView: MTKView, MTKViewDelegate {
+/// Draws one colour into a `CAMetalLayer` from a thread of its own.
+///
+/// The layer must keep receiving frames: one that is drawn once and left
+/// alone is, after about a second, shown as an opaque white sheet without the
+/// multiply (seen with a camera on a black screen). Frames used to come from a
+/// main-thread timer, and in normal use the gap between frames that reached
+/// the screen once grew to 2.25 s, long enough for the white sheet. Drawing
+/// here does not depend on the main thread at all.
+private final class MultiplyRenderer: @unchecked Sendable {
+    let layer = CAMetalLayer()
     private let commandQueue: MTLCommandQueue
+    private let queue = DispatchQueue(label: "io.github.overbright.overlay", qos: .userInteractive)
+    private let lock = NSLock()
 
-    init?(size: NSSize) {
-        let frame = NSRect(origin: .zero, size: size)
+    // Guarded by `lock`.
+    private var multiplier: Double = 1
+    private var lastPresented: CFTimeInterval?
+    private var maxGap: CFTimeInterval = 0
+
+    // Used on `queue` only.
+    private var timer: DispatchSourceTimer?
+    private var interval: TimeInterval = 0
+    private var burstFrames = 0
+
+    init?() {
         guard let device = MTLCreateSystemDefaultDevice(),
               let commandQueue = device.makeCommandQueue() else { return nil }
         self.commandQueue = commandQueue
-        super.init(frame: frame, device: device)
-        delegate = self
-        colorPixelFormat = .rgba16Float
+        layer.device = device
+        layer.pixelFormat = .rgba16Float
         // Linear, so the multiply scales light, not encoded values.
-        colorspace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)
-        clearColor = MTLClearColorMake(1, 1, 1, 1)
+        layer.colorspace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)
+        layer.wantsExtendedDynamicRangeContent = true
+        layer.isOpaque = false
+        layer.framebufferOnly = true
         // One colour everywhere: a tiny drawable stretched over the screen.
-        autoResizeDrawable = false
-        drawableSize = CGSize(width: 16, height: 16)
-        framebufferOnly = true
-        // Keep redrawing. A layer that is drawn once and left alone is, after
-        // about a second, shown as an opaque white sheet without the multiply
-        // (seen with a camera on a black screen). MTKView's own display link
-        // stops when macOS naps a background app or decides the window is not
-        // visible, so the view is paused and driven by a timer of ours instead;
-        // the overlay service also keeps the app out of App Nap.
-        isPaused = true
-        enableSetNeedsDisplay = false
-        if let metalLayer = layer as? CAMetalLayer {
-            metalLayer.wantsExtendedDynamicRangeContent = true
-            metalLayer.isOpaque = false
-            metalLayer.contentsGravity = .resize
-            metalLayer.compositingFilter = "multiplyBlendMode"
-        }
+        layer.drawableSize = CGSize(width: 16, height: 16)
+        layer.contentsGravity = .resize
+        layer.allowsNextDrawableTimeout = true
+        layer.compositingFilter = "multiplyBlendMode"
     }
 
-    required init(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    /// The longest time between two frames that reached the screen.
+    var maxFrameGap: TimeInterval {
+        lock.lock(); defer { lock.unlock() }
+        return maxGap
     }
-
-    private var timer: Timer?
-    private var burstFrames = 0
-    private var lastDrawAt: TimeInterval?
-
-    /// The longest time between two redraws since the layer was shown. Above
-    /// about a second the layer turns into an opaque sheet; `status --json`
-    /// reports it as `overlayMaxFrameGap`.
-    private(set) var maxFrameGap: TimeInterval = 0
 
     /// Draws `multiplier` now and keeps redrawing at 120 frames a second for
     /// half a second: a change reaches the screen in about 0.15 s that way,
     /// against 0.4 s at the idle 4 frames a second (measured).
-    func show(_ multiplier: Double) {
-        clearColor = MTLClearColorMake(multiplier, multiplier, multiplier, 1)
-        burstFrames = 60
-        schedule(interval: 1.0 / 120.0)
-        draw()
+    func show(_ value: Double) {
+        lock.lock(); multiplier = value; lock.unlock()
+        queue.async {
+            self.burstFrames = 60
+            self.schedule(interval: 1.0 / 120.0)
+            self.draw()
+        }
     }
 
-    private func schedule(interval: TimeInterval) {
-        if let timer, timer.isValid, timer.timeInterval == interval { return }
-        timer?.invalidate()
-        let next = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+    func stop() {
+        queue.sync {
+            timer?.cancel()
+            timer = nil
+            interval = 0
         }
-        next.tolerance = interval / 10
-        RunLoop.main.add(next, forMode: .common)
-        timer = next
+    }
+
+    private func schedule(interval next: TimeInterval) {
+        guard timer == nil || interval != next else { return }
+        timer?.cancel()
+        let source = DispatchSource.makeTimerSource(queue: queue)
+        source.schedule(
+            deadline: .now() + next, repeating: next,
+            leeway: .microseconds(Int(next * 100_000))
+        )
+        source.setEventHandler { [weak self] in self?.tick() }
+        source.resume()
+        timer = source
+        interval = next
     }
 
     private func tick() {
+        // For tests: lets a check see what a stalled layer looks like.
+        if UserDefaults.standard.bool(forKey: "debugStopRedraw") { return }
         if burstFrames > 0 {
             burstFrames -= 1
             if burstFrames == 0 { schedule(interval: 0.25) }
@@ -82,41 +99,48 @@ private final class MultiplyView: MTKView, MTKViewDelegate {
         draw()
     }
 
-    func stopDrawing() {
-        timer?.invalidate()
-        timer = nil
-    }
-
-    func draw(in view: MTKView) {
-        guard let descriptor = currentRenderPassDescriptor,
-              let buffer = commandQueue.makeCommandBuffer(),
-              let encoder = buffer.makeRenderCommandEncoder(descriptor: descriptor),
-              let drawable = currentDrawable else { return }
+    private func draw() {
+        lock.lock(); let value = multiplier; lock.unlock()
+        guard let drawable = layer.nextDrawable(),
+              let buffer = commandQueue.makeCommandBuffer() else { return }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = drawable.texture
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(value, value, value, 1)
+        guard let encoder = buffer.makeRenderCommandEncoder(descriptor: pass) else { return }
         encoder.endEncoding()
-        buffer.present(drawable)
-        // Measured where a frame reaches the screen, not where one was asked
-        // for: a draw without a drawable shows nothing.
+        // Timed where a frame reaches the screen, not where one was asked for.
         drawable.addPresentedHandler { [weak self] presented in
             let at = presented.presentedTime
-            guard at > 0 else { return }
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { self?.framePresented(at: at) }
-            }
+            guard at > 0, let self else { return }
+            self.lock.lock()
+            if let last = self.lastPresented, at > last { self.maxGap = max(self.maxGap, at - last) }
+            self.lastPresented = max(self.lastPresented ?? 0, at)
+            self.lock.unlock()
         }
+        buffer.present(drawable)
         buffer.commit()
     }
+}
 
-    private func framePresented(at time: CFTimeInterval) {
-        if let lastDrawAt, time > lastDrawAt { maxFrameGap = max(maxFrameGap, time - lastDrawAt) }
-        lastDrawAt = max(lastDrawAt ?? 0, time)
+/// Hosts the renderer's layer in a window.
+private final class MultiplyView: NSView {
+    let renderer: MultiplyRenderer
+
+    init?(size: NSSize) {
+        guard let renderer = MultiplyRenderer() else { return nil }
+        self.renderer = renderer
+        super.init(frame: NSRect(origin: .zero, size: size))
+        layer = renderer.layer
+        wantsLayer = true
     }
 
-    /// Time since the last frame reached the screen.
-    var sinceLastFrame: TimeInterval {
-        lastDrawAt.map { CACurrentMediaTime() - $0 } ?? 0
-    }
+    required init?(coder: NSCoder) { nil }
 
-    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    var maxFrameGap: TimeInterval { renderer.maxFrameGap }
+    func show(_ multiplier: Double) { renderer.show(multiplier) }
+    func stopDrawing() { renderer.stop() }
 }
 
 @MainActor
@@ -215,7 +239,17 @@ final class EDROverlayService {
     }
 
     private var slowTicks = 0
+    private var lastTrackAt: TimeInterval?
+
+    /// The longest the main thread went without running the 60 Hz tracking
+    /// timer while the layer was up. Drawing no longer depends on it; this
+    /// shows whether something blocks the app (`mainThreadMaxGap`).
+    private(set) var mainThreadMaxGap: TimeInterval = 0
+
     private func track() {
+        let tickAt = ProcessInfo.processInfo.systemUptime
+        if let lastTrackAt { mainThreadMaxGap = max(mainThreadMaxGap, tickAt - lastTrackAt) }
+        lastTrackAt = tickAt
         if correction >= EDRWhiteCorrection.full {
             slowTicks += 1
             if slowTicks % 15 != 0 { return }
@@ -247,6 +281,7 @@ final class EDROverlayService {
         trackingTimer = nil
         peakReachedAt = nil
         reportedHeadroom = nil
+        lastTrackAt = nil
         correction = 1
         view?.stopDrawing()
         if let activity { ProcessInfo.processInfo.endActivity(activity) }

@@ -11,7 +11,7 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 
 - **As bright as the panel goes.** With the overlay method (macOS 27.2) the ceiling is no longer a fixed 160%: Overbright measures the panel's EDR headroom the first time the boost reaches the peak and remembers it. On a 14" MacBook Pro that is 244% (2.67× headroom less the 9% Overbright adds back for macOS's dimmer white); other models get their own number. `"maxLevel"` is now `"auto"` by default, or a number up to 400 for a lower ceiling. `status --json` adds `panelMaxLevel`.
 - **Indicator restyled after the macOS volume indicator.** A larger glass capsule with a sun, 16 thin, evenly spaced dashes spanning 0% to the panel's ceiling, and the percentage.
-- `overlayMaxFrameGap` in `status --json` now measures frames that actually reached the screen.
+- **The boost layer draws from its own thread.** It used to be redrawn by a timer on the app's main thread; in normal use frames once stopped for 2.25 s, long enough for the layer to show as a white sheet over the whole screen. `status --json` reports `overlayMaxFrameGap` (frames that reached the screen) and `mainThreadMaxGap`.
 
 ## 2.3
 
