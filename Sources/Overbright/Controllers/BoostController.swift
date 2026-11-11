@@ -21,6 +21,7 @@ final class BoostController {
     private let gamma = GammaTableService()
     private let edrTrigger = EDRTriggerService()
     private let nativeBrightness = NativeBrightnessService()
+    private let overlay = EDROverlayService()
     private let defaults = UserDefaults.standard
     private let logger = Logger(subsystem: AppInfo.bundleID, category: "Recovery")
 
@@ -36,6 +37,18 @@ final class BoostController {
     private var integrityTimer: Timer?
     private var backlightObservation = BacklightObservation()
     private var lastObservedBacklight: Float?
+
+    /// The configured boost method.
+    var method: BoostMethod = .classic {
+        didSet {
+            guard method != oldValue, wantedActive, state == .active else { return }
+            applyCurrentLevel()
+        }
+    }
+    var effectiveMethod: BoostMethod { method }
+
+    /// Longest gap between boost-layer redraws while it is up (overlay method).
+    var overlayMaxFrameGap: TimeInterval { overlay.maxFrameGap }
 
     private(set) var state: BoostState = .off
     private(set) var level: BoostLevel
@@ -165,7 +178,9 @@ final class BoostController {
             defaults.synchronize()
         }
 
-        guard gamma.captureBaseline(displayID: displayID) else {
+        // The overlay method never writes a gamma table: on macOS 27.2 a table
+        // installed when EDR starts makes white jump to the full backlight.
+        guard effectiveMethod == .overlay || gamma.captureBaseline(displayID: displayID) else {
             failActivation(L10n.tr("Could not read the display gamma table", "无法读取屏幕颜色表"))
             return
         }
@@ -176,12 +191,21 @@ final class BoostController {
         }
         backlightMonitoringEnabled = true
         lastObservedBacklight = nativeBrightness.read(displayID: displayID)
-        guard edrTrigger.start(on: screen) else {
+        guard startEDRLayer(on: screen) else {
             failActivation(L10n.tr("Could not create the EDR layer", "无法创建 EDR 图层"))
             return
         }
 
         waitForEDR(generation: generation, attemptsRemaining: 80)
+    }
+
+    private func startEDRLayer(on screen: NSScreen) -> Bool {
+        effectiveMethod == .overlay ? overlay.start(on: screen) : edrTrigger.start(on: screen)
+    }
+
+    private func stopEDRLayers() {
+        overlay.stop()
+        edrTrigger.stop()
     }
 
     @discardableResult
@@ -224,59 +248,6 @@ final class BoostController {
         if shouldEnable {
             enable()
         }
-    }
-
-    func handleBrightnessKey(
-        _ direction: BrightnessKeyDirection,
-        fineGrained: Bool
-    ) -> Bool {
-        if resumePending {
-            cancelPendingResume()
-            return false
-        }
-        guard suspensionReasons.isEmpty else { return false }
-
-        if wantedActive {
-            if direction == .decrease,
-               level.factor <= BoostLevel.minimum {
-                endBoostAtNativeMaximum()
-                return false
-            }
-
-            let next = BrightnessKeyStep.nextBoostLevel(
-                from: level.factor,
-                direction: direction,
-                fineGrained: fineGrained
-            )
-            if abs(next.factor - level.factor) < 0.0001 {
-                return true
-            }
-            setLevel(next.factor)
-            guard wantedActive else { return false }
-            if direction == .decrease,
-               next.factor <= BoostLevel.minimum {
-                endBoostAtNativeMaximum()
-            }
-            return true
-        }
-
-        guard !wantedActive,
-              direction == .increase,
-              snapshot.potentialEDRHeadroom > 1.05,
-              let displayID = DisplayLookup.builtInScreen?.overbrightID,
-              let currentBrightness = nativeBrightness.read(displayID: displayID),
-              currentBrightness >= 0.995 else {
-            return false
-        }
-
-        let next = BrightnessKeyStep.nextBoostLevel(
-            from: BoostLevel.minimum,
-            direction: .increase,
-            fineGrained: fineGrained
-        )
-        setLevel(next.factor)
-        enable()
-        return wantedActive
     }
 
     func brightnessKeyControlDidBecomeUnavailable() {
@@ -403,7 +374,7 @@ final class BoostController {
         GammaTableService.restoreColorSyncDefaults()
         gammaRecoveryHandled = true
         gamma.discardBaseline()
-        edrTrigger.stop()
+        stopEDRLayers()
 
         var nativeBrightnessRestored = true
         if let savedNativeBrightness {
@@ -448,7 +419,9 @@ final class BoostController {
         guard wantedActive else { return }
 
         let currentEDR = screen.maximumExtendedDynamicRangeColorComponentValue
-        if backlightReady && currentEDR > 1.05 {
+        // The overlay is limited by the headroom as the backlight ramps up, so
+        // it can take over at once instead of waiting for the ramp to finish.
+        if backlightReady && (currentEDR > 1.05 || effectiveMethod == .overlay) {
             applyCurrentLevel()
             return
         }
@@ -475,9 +448,11 @@ final class BoostController {
         }
 
         guard verifyNativeBrightnessForBoost(displayID: displayID) else { return }
-        let safeFactor = targetFactor(for: screen)
+        let applied = effectiveMethod == .overlay
+            ? overlay.show(level: level.factor)
+            : gamma.apply(factor: targetFactor(for: screen))
 
-        guard gamma.apply(factor: safeFactor) else {
+        guard applied else {
             failActivation(L10n.tr("Could not apply the boost", "无法应用屏幕增亮"))
             return
         }
@@ -505,7 +480,7 @@ final class BoostController {
     private func restoreDisplay(restoreNativeBrightness: Bool) -> Bool {
         backlightMonitoringEnabled = false
         let gammaRestored = restoreGammaWithFallback()
-        edrTrigger.stop()
+        stopEDRLayers()
 
         var nativeBrightnessRestored = true
         if restoreNativeBrightness, let savedNativeBrightness {
@@ -560,12 +535,24 @@ final class BoostController {
 
         guard verifyNativeBrightnessForBoost(displayID: displayID) else { return }
 
+        if effectiveMethod == .overlay {
+            if overlay.isShowing {
+                overlay.follow(screen)
+            } else if !overlay.start(on: screen) {
+                failActivation(L10n.tr("Could not re-enter EDR mode", "无法恢复 EDR 模式"))
+                return
+            }
+            if overlay.level != level.factor { applyCurrentLevel() }
+            publishSnapshot()
+            return
+        }
+
         if screen.maximumExtendedDynamicRangeColorComponentValue <= 1.05 {
             guard restoreGammaBeforeRetrigger() else {
                 failActivation(L10n.tr("Could not safely restore the display gamma table", "无法安全恢复屏幕颜色表"))
                 return
             }
-            edrTrigger.stop()
+            stopEDRLayers()
             gamma.discardBaseline()
             engagementGeneration += 1
             let generation = engagementGeneration
@@ -609,6 +596,14 @@ final class BoostController {
         switch backlightObservation.observe(currentBrightness, now: ProcessInfo.processInfo.systemUptime) {
         case .ready:
             if let currentBrightness {
+                if state == .active, let previous = lastObservedBacklight,
+                   BuiltInBrightnessScale.backlightDropEndsBoost(previous: previous, current: currentBrightness) {
+                    defaults.set("boost ended: backlight lowered to \(currentBrightness)", forKey: "lastBacklightEvent")
+                    logger.info("Backlight lowered to \(currentBrightness, privacy: .public) while boosted; boost ended")
+                    lastObservedBacklight = currentBrightness
+                    endBoostPreservingNativeBrightness(currentBrightness)
+                    return false
+                }
                 if let previous = lastObservedBacklight,
                    abs(currentBrightness - previous) > 0.001 {
                     // Follow native brightness WITHOUT writing it or disabling EDR.
@@ -657,7 +652,7 @@ final class BoostController {
         defaults.synchronize()
 
         let gammaRestored = restoreGammaWithFallback()
-        edrTrigger.stop()
+        stopEDRLayers()
         if gammaRestored {
             gamma.discardBaseline()
             activeDisplayID = nil
@@ -779,6 +774,54 @@ final class BoostController {
             activeColorProfileIdentity = nil
         }
         return nativeBrightnessRestored
+    }
+
+    // MARK: One scale, 0–160%
+
+    /// Where the built-in display is on the 0–160% scale.
+    var scalePercent: Double? {
+        guard let id = DisplayLookup.builtInScreen?.overbrightID,
+              let backlight = nativeBrightness.read(displayID: id) else { return nil }
+        return BuiltInBrightnessScale.percent(backlight: backlight, boost: level, boosting: wantedActive)
+    }
+
+    var scaleTop: Double {
+        snapshot.potentialEDRHeadroom > 1.05 ? BuiltInBrightnessScale.top : 100
+    }
+
+    /// One brightness-key press on the built-in display. Below 100% it steps
+    /// the system backlight; above, the boost. Returns the new position.
+    func stepScale(_ direction: BrightnessKeyDirection, step: Double) -> Double? {
+        guard suspensionReasons.isEmpty, let current = scalePercent else { return nil }
+        if resumePending { cancelPendingResume() }
+        let next = BuiltInBrightnessScale.next(from: current, direction: direction, step: step, top: scaleTop)
+        return setScale(next) ? next : current
+    }
+
+    /// Moves the built-in display to a position on the 0–160% scale.
+    @discardableResult
+    func setScale(_ percent: Double) -> Bool {
+        guard suspensionReasons.isEmpty,
+              let id = DisplayLookup.builtInScreen?.overbrightID else { return false }
+        let target = min(max(percent, 0), scaleTop)
+        let (backlight, boost) = BuiltInBrightnessScale.split(target)
+        if let boost {
+            if wantedActive {
+                setLevel(boost)
+            } else {
+                if let current = nativeBrightness.read(displayID: id), current < 0.999 {
+                    nativeBrightness.write(1, displayID: id)
+                }
+                setLevel(boost)
+                enable(raiseBacklight: false)
+            }
+            return wantedActive
+        }
+        if wantedActive {
+            setLevel(BoostLevel.minimum)
+            disable()
+        }
+        return nativeBrightness.write(backlight, displayID: id)
     }
 
     private func setState(_ newState: BoostState) {

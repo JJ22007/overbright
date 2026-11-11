@@ -6,3 +6,8 @@ outputs/*.app/
 outputs/*.zip
 *.log
 .DS_Store
+outputs/brightness-check/
+outputs/light-check/
+outputs/camera/
+outputs/brightness-power/
+outputs/camera-plan.md

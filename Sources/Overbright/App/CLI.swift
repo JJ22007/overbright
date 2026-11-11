@@ -21,7 +21,7 @@ import AppKit
 enum CLI {
     static let commands: Set<String> = [
         "status", "on", "off", "toggle", "set", "up", "down", "preset", "presets",
-        "displays", "display",
+        "displays", "display", "key",
         "config", "check", "version", "help", "--help", "-h", "--version", "--check"
     ]
 
@@ -32,8 +32,14 @@ enum CLI {
       overbright on                  turn the boost on at the last level
       overbright off                 return to standard brightness
       overbright toggle              switch between the two
-      overbright set <percent>       100 turns the boost off, 101-160 boosts
-      overbright up | down           one brightness-key step
+      overbright set <percent>       one scale for the built-in display: 0-100 is
+                                     the system backlight, 101-160 the boost
+      overbright up | down           one step along that scale
+      overbright key up|down [--fine]
+                                     exactly what F1/F2 do, indicator included
+      overbright key up|down --real [--control]
+                                     post a real brightness key press, which
+                                     travels through macOS and the key tap
       overbright preset <name>       apply a preset from the config
       overbright presets             list the presets
       overbright displays            list external displays and how each is controlled
@@ -145,6 +151,8 @@ final class CommandServer {
     private let brightnessKeyService: BrightnessKeyService
     private let externalDisplays: ExternalDisplayManager
     private var observer: NSObjectProtocol?
+    /// The app's F1/F2 handler, for `overbright key`.
+    var keyHandler: ((BrightnessKeyDirection, Bool) -> Double?)?
 
     init(
         boostController: BoostController,
@@ -231,20 +239,47 @@ final class CommandServer {
 
         case "set":
             let raw = arguments.dropFirst().first?.replacingOccurrences(of: "%", with: "") ?? ""
-            guard let percent = Double(raw), percent.isFinite, percent >= 100 else {
-                finish(2, "error: set needs a percentage from 100 to \(Self.plain(config.maxLevel))")
+            let top = boostController.scaleTop
+            guard let percent = Double(raw), percent.isFinite, (0...top).contains(percent) else {
+                finish(2, "error: set needs a percentage from 0 to \(Self.plain(min(top, config.maxLevel)))")
                 return
             }
-            boostController.setLevelFromUserInteraction(Float(percent / 100))
+            boostController.setScale(percent)
             settle(finish)
 
         case "up", "down":
             let direction: BrightnessKeyDirection = command == "up" ? .increase : .decrease
-            let current = boostController.isWanted ? boostController.level.factor : BoostLevel.minimum
-            let next = BrightnessKeyStep.nextBoostLevel(
-                from: current, direction: direction, fineGrained: false
-            )
-            boostController.setLevelFromUserInteraction(next.factor)
+            _ = boostController.stepScale(direction, step: config.keyStep)
+            settle(finish)
+
+        case "key":
+            let fine = arguments.contains("--fine")
+            guard let which = arguments.dropFirst().first(where: { !$0.hasPrefix("--") }),
+                  which == "up" || which == "down" else {
+                finish(2, "error: key needs up or down")
+                return
+            }
+            if arguments.contains("--real") {
+                // The press goes out at the HID tap, so it reaches this app's
+                // own key tap, and macOS after it, the way a keyboard's does.
+                guard brightnessKeyService.isRunning else {
+                    finish(1, "error: the brightness key tap is not running (Accessibility permission, or brightnessKeys is off)")
+                    return
+                }
+                BrightnessKeyService.postMediaKey(
+                    which == "up" ? .increase : .decrease,
+                    control: arguments.contains("--control"),
+                    fineGrained: fine
+                )
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    self?.settle(finish)
+                }
+                return
+            }
+            guard keyHandler?(which == "up" ? .increase : .decrease, fine) != nil else {
+                finish(1, "error: the built-in display is not available")
+                return
+            }
             settle(finish)
 
         case "preset":
@@ -366,6 +401,9 @@ final class CommandServer {
     private func statusLine() -> String {
         let snapshot = boostController.snapshot
         var line = "\(stateName) \(snapshot.level.percentage)%"
+        if let scale = boostController.scalePercent {
+            line += " (scale \(Int(scale.rounded()))%)"
+        }
         if snapshot.potentialEDRHeadroom <= 1.05 {
             line += " (this display has no EDR headroom)"
         }
@@ -389,6 +427,10 @@ final class CommandServer {
                 ["name": $0.name, "level": $0.level] as [String: Any]
             },
             "configProblems": ConfigStore.shared.problems,
+            "scale": boostController.scalePercent.map { ($0 * 100).rounded() / 100 } ?? NSNull(),
+            "scaleTop": boostController.scaleTop,
+            "boostMethod": boostController.effectiveMethod.rawValue,
+            "overlayMaxFrameGap": (boostController.overlayMaxFrameGap * 1000).rounded() / 1000,
             "externalDisplays": externalDisplays.displays.map {
                 [
                     "id": Int($0.id),

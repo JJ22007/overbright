@@ -41,6 +41,9 @@ struct Config: Equatable {
     /// Let external displays go below 0%: the backlight stays at its minimum
     /// and the picture is darkened in software, down to -90%.
     var extraDimming: Bool = true
+    /// How the boost brightens the built-in display: "auto" picks by macOS
+    /// version, "overlay" or "classic" force one. See `BoostMethod`.
+    var boostMethod: String = "auto"
     var presets: [Preset] = []
 
     /// Problems found while decoding. Each one names the entry at fault.
@@ -49,7 +52,7 @@ struct Config: Equatable {
     static let knownKeys: Set<String> = [
         "maxLevel", "keyStep", "fineKeyStep", "brightnessKeys",
         "enableOnLaunch", "showPercentage", "language", "presets",
-        "externalDisplays", "externalKeys", "showHUD", "extraDimming"
+        "externalDisplays", "externalKeys", "showHUD", "extraDimming", "boostMethod"
     ]
 
     enum ParseError: Error, Equatable {
@@ -93,6 +96,14 @@ struct Config: Equatable {
         externalKeys = flag("externalKeys", in: dictionary, default: externalKeys)
         showHUD = flag("showHUD", in: dictionary, default: showHUD)
         extraDimming = flag("extraDimming", in: dictionary, default: extraDimming)
+        if let raw = dictionary["boostMethod"] {
+            let options = ["auto"] + BoostMethod.allCases.map(\.rawValue)
+            if let value = (raw as? String)?.lowercased(), options.contains(value) {
+                boostMethod = value
+            } else {
+                warnings.append("\"boostMethod\" must be \"auto\", \"overlay\" or \"classic\"; using \"auto\"")
+            }
+        }
 
         if let raw = dictionary["language"] {
             if let value = raw as? String, Self.languages.contains(value.lowercased()) {
@@ -113,6 +124,14 @@ struct Config: Equatable {
                 warnings.append("\"presets\" must be a list")
             }
         }
+    }
+
+    /// The boost method for this Mac: the configured one, or by macOS version.
+    func resolvedBoostMethod(
+        os: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
+    ) -> BoostMethod {
+        BoostMethod(rawValue: boostMethod)
+            ?? BoostMethod.automatic(major: os.majorVersion, minor: os.minorVersion)
     }
 
     func preset(named query: String) -> Preset? {
@@ -152,6 +171,7 @@ struct Config: Equatable {
           "externalKeys": \(externalKeys),
           "showHUD": \(showHUD),
           "extraDimming": \(extraDimming),
+          "boostMethod": \(quote(boostMethod)),
           "presets": \(presetBlock)
         }
 

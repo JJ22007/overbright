@@ -76,6 +76,28 @@ final class GammaTableService {
         return true
     }
 
+    /// Never scale the picture below this; protects against a bad value.
+    static let minimumExactFactor: Float = 0.05
+
+    /// Scales the baseline by an exact factor, below 1 as well as above.
+    @discardableResult
+    func apply(exactFactor proposed: Float) -> Bool {
+        guard var table = baseline, let displayID else { return false }
+        let factor = proposed.isFinite
+            ? min(max(proposed, Self.minimumExactFactor), BoostLevel.maximum)
+            : 1
+        for index in table.red.indices {
+            table.red[index] *= factor
+            table.green[index] *= factor
+            table.blue[index] *= factor
+        }
+        guard CGSetDisplayTransferByTable(
+            displayID, table.sampleCount, &table.red, &table.green, &table.blue
+        ) == .success else { return false }
+        appliedFactor = factor
+        return true
+    }
+
     func appearsApplied(tolerance: Float = 0.025) -> Bool {
         guard let baseline, let displayID else { return false }
 

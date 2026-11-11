@@ -327,6 +327,68 @@ expect(!externalOptions.externalDisplays && !externalOptions.externalKeys && !ex
        externalOptions.warnings.isEmpty, "external display options decode")
 expect(Config().externalDisplays && Config().externalKeys && Config().showHUD, "external displays are on by default")
 
+// MARK: Built-in brightness scale (one 0–160% scale)
+
+expect(BuiltInBrightnessScale.top == 160, "the built-in scale tops out at 160%")
+expect(BuiltInBrightnessScale.percent(backlight: 0.5, boost: BoostLevel(1.4), boosting: false) == 50,
+       "below the boost the position is the backlight")
+expect(abs(BuiltInBrightnessScale.percent(backlight: 1, boost: BoostLevel(1.4), boosting: true) - 140) < 0.001,
+       "while boosting the position is the boost level")
+expect(BuiltInBrightnessScale.next(from: 100, direction: .increase, step: 6.25, top: 160) == 106.25,
+       "F2 at 100% enters the boost")
+expect(BuiltInBrightnessScale.next(from: 106.25, direction: .decrease, step: 6.25, top: 160) == 100,
+       "F1 leaves the boost at exactly 100%")
+expect(BuiltInBrightnessScale.next(from: 93.75, direction: .increase, step: 6.25, top: 160) == 100,
+       "F2 below 100% stops at 100% on the way up")
+expect(BuiltInBrightnessScale.next(from: 156.25, direction: .increase, step: 6.25, top: 160) == 160,
+       "F2 stops at the top")
+expect(BuiltInBrightnessScale.next(from: 0, direction: .decrease, step: 6.25, top: 160) == 0, "F1 stops at 0%")
+expect(BuiltInBrightnessScale.next(from: 100, direction: .increase, step: 6.25, top: 100) == 100,
+       "a display that cannot boost stops at 100%")
+expect(BuiltInBrightnessScale.next(from: 47.3, direction: .increase, step: 6.25, top: 160) == 50,
+       "an off-grid backlight snaps to the next step")
+expect(BuiltInBrightnessScale.next(from: 100, direction: .decrease, step: 1.5625, top: 160) == 98.4375,
+       "fine steps are a quarter step")
+var position = 0.0
+var stepsUp = 0
+while position < 160 { position = BuiltInBrightnessScale.next(from: position, direction: .increase, step: 6.25, top: 160); stepsUp += 1 }
+expect(stepsUp == 26, "0% to 160% is 16 steps of backlight and 10 of boost")
+expect(BuiltInBrightnessScale.split(80) == (0.8, nil), "below 100% only the backlight moves")
+expect(BuiltInBrightnessScale.split(100) == (1, nil), "100% is full backlight without boost")
+expect(BuiltInBrightnessScale.split(125).backlight == 1 && BuiltInBrightnessScale.split(125).boost == 1.25,
+       "above 100% the backlight is full and the rest is boost")
+let fills = BuiltInBrightnessScale.segmentFills(percent: 105, top: 160)
+expect(fills.count == 16 && fills[9] == 1 && abs(fills[10] - 0.5) < 0.0001 && fills[11] == 0,
+       "the 16 segments cover 0–160%, 10% each")
+expect(BuiltInBrightnessScale.segmentFills(percent: 160, top: 160).allSatisfy { $0 == 1 }, "all segments are full at the top")
+expect(BuiltInBrightnessScale.segmentFills(percent: 0, top: 160).allSatisfy { $0 == 0 }, "no segment is lit at 0%")
+expect(BuiltInBrightnessScale.backlightDropEndsBoost(previous: 1, current: 0.5), "a clear backlight drop ends the boost")
+expect(!BuiltInBrightnessScale.backlightDropEndsBoost(previous: 1, current: 0.97), "a tiny backlight wobble keeps the boost")
+expect(!BuiltInBrightnessScale.backlightDropEndsBoost(previous: 0.5, current: 0.9), "a backlight rise never ends the boost")
+
+// MARK: Boost method
+
+expect(BoostMethod.automatic(major: 27, minor: 2) == .overlay, "macOS 27.2 uses the multiply overlay")
+expect(BoostMethod.automatic(major: 28, minor: 0) == .overlay, "later macOS uses the multiply overlay")
+expect(BoostMethod.automatic(major: 27, minor: 1) == .classic, "macOS 27.1 keeps the classic gamma boost")
+expect(BoostMethod.automatic(major: 15, minor: 6) == .classic, "older macOS keeps the classic gamma boost")
+expect(parsed(#"{"boostMethod": "classic"}"#).resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 27, minorVersion: 2, patchVersion: 1)) == .classic,
+       "the config can force the classic method")
+expect(parsed(#"{"boostMethod": "overlay"}"#).resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)) == .overlay,
+       "the config can force the overlay method")
+expect(parsed("{}").resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 27, minorVersion: 2, patchVersion: 1)) == .overlay,
+       "auto picks the overlay on macOS 27.2")
+expect(parsed(#"{"boostMethod": "bright"}"#).warnings.count == 1, "an unknown boost method warns")
+expect(parsed(#"{"boostMethod": "panel"}"#).warnings.count == 1, "the withdrawn panel method warns")
+expect(EDRWhiteCorrection.value(sincePeak: nil) == 1, "no correction while the backlight ramps up")
+expect(EDRWhiteCorrection.value(sincePeak: 0) == 1, "no correction yet as the backlight nears its peak")
+expect(abs(EDRWhiteCorrection.value(sincePeak: 0.125) - 1.045) < 0.0001, "half way through, half the correction")
+expect(EDRWhiteCorrection.value(sincePeak: 2) == EDRWhiteCorrection.full, "the full correction once macOS has dimmed white")
+expect(EDRWhiteCorrection.isAtPeak(panelNits: 1599, peakNits: 1600), "1599 of 1600 nits is the peak")
+expect(EDRWhiteCorrection.isAtPeak(panelNits: 1500, peakNits: 1600), "the last ~70 ms of the ramp count, for the layer's latency")
+expect(!EDRWhiteCorrection.isAtPeak(panelNits: 1300, peakNits: 1600), "a backlight still ramping is not")
+expect(!EDRWhiteCorrection.isAtPeak(panelNits: 722, peakNits: nil), "without a known peak, a standard level is not")
+
 if failureCount > 0 {
     exit(1)
 }

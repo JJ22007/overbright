@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var commandServer: CommandServer?
     private var externalDisplays: ExternalDisplayManager?
     private var hud: BrightnessHUD?
+    private let scaleHUD = ScaleHUD()
     private var signalSources: [DispatchSourceSignal] = []
     private var brightnessKeyHealthTimer: Timer?
     private var brightnessKeysWereRunning = false
@@ -34,14 +35,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyConfigToModels()
 
         let boostController = BoostController()
+        boostController.method = ConfigStore.shared.config.resolvedBoostMethod()
         self.boostController = boostController
 
-        let brightnessKeyService = BrightnessKeyService {
-            [weak boostController] direction, fineGrained in
-            boostController?.handleBrightnessKey(
-                direction,
-                fineGrained: fineGrained
-            ) ?? false
+        let brightnessKeyService = BrightnessKeyService { [weak self] direction, fineGrained in
+            self?.handleBuiltInKey(direction, fineGrained: fineGrained) != nil
         }
         self.brightnessKeyService = brightnessKeyService
 
@@ -76,6 +74,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             brightnessKeyService: brightnessKeyService,
             externalDisplays: externalDisplays
         )
+        commandServer.keyHandler = { [weak self] direction, fine in
+            self?.handleBuiltInKey(direction, fineGrained: fine)
+        }
         commandServer.start()
         self.commandServer = commandServer
 
@@ -113,12 +114,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The config file was saved. Everything it controls is applied here.
     private func configDidChange() {
         applyConfigToModels()
+        boostController?.method = ConfigStore.shared.config.resolvedBoostMethod()
         externalDisplays?.isEnabled = ConfigStore.shared.config.externalDisplays
         externalDisplays?.extraDimming = ConfigStore.shared.config.extraDimming
         boostController?.capDidChange()
         brightnessKeyService?.isEnabled = ConfigStore.shared.config.brightnessKeys
         brightnessKeyService?.start()
         statusController?.rebuildMenu()
+    }
+
+    /// F1/F2 on the built-in display: one step along the 0–160% scale, with
+    /// Overbright's indicator as the only one. Returns the new position, or nil
+    /// to leave the key to macOS.
+    @discardableResult
+    func handleBuiltInKey(_ direction: BrightnessKeyDirection, fineGrained: Bool) -> Double? {
+        let config = ConfigStore.shared.config
+        guard let boostController,
+              let percent = boostController.stepScale(
+                direction,
+                step: fineGrained ? config.fineKeyStep : config.keyStep
+              ) else { return nil }
+        if config.showHUD {
+            scaleHUD.show(percent: percent, top: boostController.scaleTop)
+        }
+        return percent
     }
 
     /// Control+F1/F2. Returns false (so macOS keeps the key) when there is no
