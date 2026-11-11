@@ -1,28 +1,23 @@
-## 安装
+## Install
 
-下载 **Display-Boost-universal.zip**，解压后把 **Display Boost.app** 拖入「应用程序」并打开。
+Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** into Applications.
 
-- macOS 13 或更新版本；同时包含 Apple Silicon 和 Intel 版本。
-- 增亮面向内置 Liquid Retina XDR 屏幕，按实际 EDR 能力启用；普通 LCD 不会因此获得 XDR 亮度。
-- 在「系统设置 → 隐私与安全性 → 辅助功能」允许 Display Boost，以使用 F1/F2。
-- 当前未经过 Apple 公证。首次打开如被阻止，可在「隐私与安全性」确认来源后选择「仍要打开」。无需关闭系统安全保护。
+- macOS 13 or later. The app contains both Apple Silicon and Intel binaries.
+- Boost needs a built-in display with EDR headroom (Liquid Retina XDR). An ordinary LCD does not get brighter.
+- Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
+- To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
-## 1.3 更新
+## 2.0
 
-- 修复环境光/系统背光变化导致增亮关闭的问题：跟随背光、保留增亮，不反复拉满系统亮度。
-- 唤醒、色彩配置恢复和退出增亮时保留最新系统亮度。
-- 增加真实背光 97.95% 和 70% 的回归测试。保持增亮开关不等于锁定实际亮度；系统调暗和温度限制仍生效。
+Display Boost is now **Overbright**, with a new bundle identifier. Quit and delete `Display Boost.app`, then allow Overbright under Accessibility once.
 
-## 1.2.1 更新
+- **Config file.** `~/.config/overbright/config.json` sets the ceiling, F1/F2 step sizes, presets, launch behaviour, the menu bar percentage and the language. It reloads when saved, and problems are listed in the menu.
+- **Command line.** `overbright status | on | off | toggle | set <percent> | up | down | preset <name>`, with `--json` output and exit codes, for scripts and AI agents.
+- **Presets** in the menu and the CLI.
+- **English interface**, with 简体中文 following the system language.
+- **Source install** in one step with `scripts/install.sh`, and `scripts/setup-signing.sh` to keep the Accessibility grant across rebuilds.
+- `AGENTS.md`, example configs and an MIT license, so the project is easy to fork and reshape.
 
-- 亮度键监听短暂失效时不再直接关闭增亮。
-- 轻微背光波动和临时读取失败经过确认后才退出增亮；明显调暗仍立即生效，不强行拉回亮度。
-- 新增背光波动逻辑测试及真实控制器的监听中断回归检查。
+The brightness engine is unchanged from 1.3.
 
-## 1.2 更新
-
-- 精简菜单，保留增亮、滑杆、恢复和亮度键设置。
-- 改善睡眠唤醒、色彩配置变化后的恢复及亮度键事件处理。
-- 通用架构自动构建，发布前运行逻辑测试。
-
-不同机型仍需实机验证；160% 为增亮目标，不代表实测亮度或持续 1600 nit。请勿同时运行其他 Gamma 增亮工具。
+Different Mac models still need testing on real hardware. 160% is a requested boost, not a measured brightness and not a sustained 1,600 nits. Do not run another gamma-based brightness tool at the same time.

@@ -1,0 +1,8 @@
+{
+  "brightnessKeys": false,
+  "showPercentage": true,
+  "presets": [
+    { "name": "Bright", "level": 130 },
+    { "name": "Max", "level": 160 }
+  ]
+}

@@ -187,8 +187,89 @@ expect(backlight.observe(.nan, now: 7.1) == .unavailable, "persistent invalid re
 backlight.reset()
 expect(backlight.observe(0, now: 20) == .ready, "zero native brightness remains valid")
 
+// MARK: Config
+
+func parsed(_ json: String) -> Config {
+    if case let .success(config) = Config.parse(Data(json.utf8)) { return config }
+    return Config()
+}
+
+let defaults = parsed("{}")
+expect(defaults == Config() && defaults.warnings.isEmpty, "empty config is the defaults with no warnings")
+if case let .success(roundTrip) = Config.parse(Data(Config().json.utf8)) {
+    expect(roundTrip == Config(), "default config file round-trips")
+} else {
+    expect(false, "default config file round-trips")
+}
+if case .failure = Config.parse(Data("{ nope".utf8)) {
+    expect(true, "broken JSON is an error, not a crash")
+} else {
+    expect(false, "broken JSON is an error, not a crash")
+}
+if case .failure(.notAnObject) = Config.parse(Data("[1]".utf8)) {
+    expect(true, "a non-object config is rejected")
+} else {
+    expect(false, "a non-object config is rejected")
+}
+
+let partial = parsed(#"{"maxLevel": 130, "showPercentage": true}"#)
+expect(partial.maxLevel == 130 && partial.showPercentage && partial.keyStep == 6.25 && partial.warnings.isEmpty,
+       "unlisted options keep their defaults")
+
+let clamped = parsed(#"{"maxLevel": 400, "keyStep": 0}"#)
+expect(clamped.maxLevel == 160 && clamped.keyStep == 0.5 && clamped.warnings.count == 2,
+       "out-of-range numbers are clamped with a warning each")
+expect(parsed(#"{"maxLevel": 100}"#).maxLevel == 160, "a ceiling of 100 would disable the app and is refused")
+
+let wrongTypes = parsed(#"{"maxLevel": "high", "brightnessKeys": 1, "language": "fr", "presets": 3, "typo": true}"#)
+expect(wrongTypes.maxLevel == 160 && wrongTypes.brightnessKeys && wrongTypes.language == "auto" &&
+       wrongTypes.presets.isEmpty && wrongTypes.warnings.count == 5,
+       "wrong types and unknown keys warn and fall back")
+expect(parsed(#"{"maxLevel": true}"#).warnings.count == 1, "a boolean is not accepted as a number")
+
+let withPresets = parsed(#"""
+{"maxLevel": 140, "presets": [
+  {"name": "Shade", "level": 115},
+  {"name": "shade", "level": 120},
+  {"name": "", "level": 120},
+  {"name": "Dim", "level": 90},
+  {"name": "Outdoors", "level": 160},
+  "nope"
+]}
+"""#)
+expect(withPresets.presets.map(\.name) == ["Shade", "Outdoors"], "bad presets are skipped, good ones kept")
+expect(withPresets.warnings.count == 5, "each skipped or capped preset is reported")
+expect(withPresets.preset(named: "OUT")?.name == "Outdoors", "presets match by case-insensitive prefix")
+expect(withPresets.preset(named: "shade")?.level == 115, "an exact preset name wins")
+expect(withPresets.preset(named: "nothing") == nil, "an unknown preset is nil")
+expect(parsed(#"{"language": "ZH"}"#).language == "zh", "language is case-insensitive")
+
+// MARK: User ceiling and custom key steps
+
+BoostLevel.cap = 1.3
+expect(abs(BoostLevel(1.6).factor - 1.3) < 0.0001, "levels stop at the user's maxLevel")
+expect(
+    abs(BoostCalibration.gammaFactor(level: BoostLevel(1.3), currentEDR: 4) -
+        (1 + 0.553125 * 0.5)) < 0.0001,
+    "a lower ceiling does not rescale the calibration curve"
+)
+BoostLevel.cap = 9
+expect(BoostLevel.cap == BoostLevel.maximum, "the ceiling can never exceed the calibrated maximum")
+BoostLevel.cap = BoostLevel.maximum
+
+BrightnessKeyStep.coarse = 0.07
+expect(
+    abs(BrightnessKeyStep.nextBoostLevel(from: 1, direction: .increase, fineGrained: false).factor - 1.07) < 0.0001,
+    "a custom key step is counted from 100 percent"
+)
+expect(
+    BrightnessKeyStep.nextBoostLevel(from: 1.07, direction: .decrease, fineGrained: false).factor == 1,
+    "a custom key step returns exactly to 100 percent"
+)
+BrightnessKeyStep.coarse = BrightnessKeyStep.defaultCoarse
+
 if failureCount > 0 {
     exit(1)
 }
 
-print("\(checkCount)/\(checkCount) logic checks passed")
+print("ok: \(checkCount)/\(checkCount) logic checks passed")

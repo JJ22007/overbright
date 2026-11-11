@@ -1,0 +1,8 @@
+{
+  "showPercentage": true,
+  "presets": [
+    { "name": "Shade", "level": 115 },
+    { "name": "Window seat", "level": 135 },
+    { "name": "Outdoors", "level": 160 }
+  ]
+}

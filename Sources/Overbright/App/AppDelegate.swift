@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var boostController: BoostController?
     private var brightnessKeyService: BrightnessKeyService?
     private var statusController: StatusItemController?
+    private var commandServer: CommandServer?
     private var signalSources: [DispatchSourceSignal] = []
     private var brightnessKeyHealthTimer: Timer?
     private var brightnessKeysWereRunning = false
@@ -25,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ProcessInfo.processInfo.disableSuddenTermination()
         ProcessInfo.processInfo.disableAutomaticTermination("Menu bar brightness control")
         NSApp.setActivationPolicy(.accessory)
+
+        // Settings come first: the controller reads its ceiling and language.
+        ConfigStore.shared.load()
+        applyConfigToModels()
 
         let boostController = BoostController()
         self.boostController = boostController
@@ -42,17 +47,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             brightnessKeyService: brightnessKeyService
         )
 
+        brightnessKeyService.isEnabled = ConfigStore.shared.config.brightnessKeys
+
+        let commandServer = CommandServer(
+            boostController: boostController,
+            brightnessKeyService: brightnessKeyService
+        )
+        commandServer.start()
+        self.commandServer = commandServer
+
+        ConfigStore.shared.onChange = { [weak self] in
+            self?.configDidChange()
+        }
+        ConfigStore.shared.startWatching()
+
         installLifecycleObservers()
         installSignalHandlers()
         configureBrightnessKeys()
 
+        if ConfigStore.shared.config.enableOnLaunch {
+            boostController.enable()
+        }
+
         if CommandLine.arguments.contains("--auto-enable-for-test") {
             let requestedLevel = Float(
-                ProcessInfo.processInfo.environment["DISPLAYBOOST_TEST_LEVEL"] ?? ""
+                ProcessInfo.processInfo.environment["OVERBRIGHT_TEST_LEVEL"] ?? ""
             ) ?? 1.25
             boostController.setLevel(requestedLevel)
             boostController.enable()
         }
+    }
+
+    /// Pushes config values into the plain model types that use them.
+    private func applyConfigToModels() {
+        let config = ConfigStore.shared.config
+        L10n.language = config.language
+        BoostLevel.cap = Float(config.maxLevel / 100)
+        BrightnessKeyStep.coarse = Float(config.keyStep / 100)
+        BrightnessKeyStep.fine = Float(config.fineKeyStep / 100)
+    }
+
+    /// The config file was saved. Everything it controls is applied here.
+    private func configDidChange() {
+        applyConfigToModels()
+        boostController?.capDidChange()
+        brightnessKeyService?.isEnabled = ConfigStore.shared.config.brightnessKeys
+        brightnessKeyService?.start()
+        statusController?.rebuildMenu()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -168,12 +209,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let started = brightnessKeyService.start()
 
         let skipPrompt = ProcessInfo.processInfo.environment[
-            "DISPLAYBOOST_SKIP_ACCESSIBILITY_PROMPT"
+            "OVERBRIGHT_SKIP_ACCESSIBILITY_PROMPT"
         ] == "1"
         let currentBuild = Bundle.main.object(
             forInfoDictionaryKey: "CFBundleVersion"
         ) as? String ?? "unbundled"
         if !started,
+           brightnessKeyService.isEnabled,
            !skipPrompt,
            UserDefaults.standard.string(
             forKey: DefaultsKey.brightnessKeysPromptedBuild

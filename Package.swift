@@ -3,17 +3,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "DisplayBoost",
+    name: "Overbright",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "DisplayBoost", targets: ["DisplayBoost"])
+        .executable(name: "Overbright", targets: ["Overbright"])
     ],
     targets: [
         .executableTarget(
-            name: "DisplayBoost",
-            path: "Sources/DisplayBoost"
+            name: "Overbright",
+            path: "Sources/Overbright"
         )
     ]
 )

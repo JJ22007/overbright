@@ -15,6 +15,13 @@ final class BrightnessKeyService {
     private var runLoopSource: CFRunLoopSource?
     private var keySequence = BrightnessKeySequence()
 
+    /// Mirrors `brightnessKeys` in the config. While false, `start()` does nothing.
+    var isEnabled = true {
+        didSet {
+            if !isEnabled { stop() }
+        }
+    }
+
     init(handler: @escaping Handler) {
         self.handler = handler
     }
@@ -38,6 +45,7 @@ final class BrightnessKeyService {
 
     @discardableResult
     func start() -> Bool {
+        guard isEnabled else { return false }
         guard isTrusted else {
             stop()
             return false

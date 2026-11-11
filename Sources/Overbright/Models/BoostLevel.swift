@@ -5,10 +5,16 @@ struct BoostLevel: Equatable {
     static let maximum: Float = 1.60
     static let defaultValue: Float = 1.25
 
+    /// The user's own ceiling (`maxLevel` in the config). Never above `maximum`,
+    /// which stays the fixed reference for `BoostCalibration`.
+    static var cap: Float = maximum {
+        didSet { cap = cap.isFinite ? min(max(cap, minimum), maximum) : maximum }
+    }
+
     let factor: Float
 
     init(_ proposed: Float) {
-        factor = proposed.isFinite ? min(max(proposed, Self.minimum), Self.maximum) : Self.minimum
+        factor = proposed.isFinite ? min(max(proposed, Self.minimum), Self.cap) : Self.minimum
     }
 
     var percentage: Int {
