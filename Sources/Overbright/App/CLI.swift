@@ -6,6 +6,8 @@
 //   overbright up | down            one brightness-key step
 //   overbright preset <name>        apply a preset from the config
 //   overbright presets              list the presets
+//   overbright displays             list external displays
+//   overbright display <name|all> <percent|up|down>
 //   overbright config               print the config file path
 //   overbright check [file]         validate a config file
 //
@@ -19,6 +21,7 @@ import AppKit
 enum CLI {
     static let commands: Set<String> = [
         "status", "on", "off", "toggle", "set", "up", "down", "preset", "presets",
+        "displays", "display",
         "config", "check", "version", "help", "--help", "-h", "--version", "--check"
     ]
 
@@ -33,6 +36,10 @@ enum CLI {
       overbright up | down           one brightness-key step
       overbright preset <name>       apply a preset from the config
       overbright presets             list the presets
+      overbright displays            list external displays and how each is controlled
+      overbright display <name|all> <percent|up|down>
+                                     set an external display, 0-100; below 0
+                                     darkens past the backlight's minimum
       overbright config              print the config file path
       overbright check [file]        validate a config file (default: yours)
       overbright version
@@ -136,11 +143,17 @@ enum CLI {
 final class CommandServer {
     private let boostController: BoostController
     private let brightnessKeyService: BrightnessKeyService
+    private let externalDisplays: ExternalDisplayManager
     private var observer: NSObjectProtocol?
 
-    init(boostController: BoostController, brightnessKeyService: BrightnessKeyService) {
+    init(
+        boostController: BoostController,
+        brightnessKeyService: BrightnessKeyService,
+        externalDisplays: ExternalDisplayManager
+    ) {
         self.boostController = boostController
         self.brightnessKeyService = brightnessKeyService
+        self.externalDisplays = externalDisplays
     }
 
     func start() {
@@ -246,9 +259,77 @@ final class CommandServer {
             boostController.setLevelFromUserInteraction(Float(preset.level / 100))
             settle(finish)
 
+        case "displays":
+            // Re-read first, so levels changed with the displays' own buttons show.
+            externalDisplays.refresh { [weak self] in
+                guard let self else { return }
+                finish(0, self.displaysText())
+            }
+
+        case "display":
+            handleDisplay(Array(arguments.dropFirst()), finish: finish)
+
         default:
             finish(2, "error: unknown command \"\(command)\". Run `overbright help`.")
         }
+    }
+
+    private func handleDisplay(_ arguments: [String], finish: @escaping (Int32, String) -> Void) {
+        let usage = "error: usage: overbright display <name|all> <percent|up|down>"
+        guard arguments.count == 2 else { finish(2, usage); return }
+        guard ConfigStore.shared.config.externalDisplays else {
+            finish(1, "error: external displays are off (\"externalDisplays\": false in the config)")
+            return
+        }
+        let query = arguments[0].lowercased()
+        let targets = externalDisplays.displays.filter {
+            query == "all" || String($0.id) == query || $0.name.lowercased().contains(query)
+        }
+        guard !targets.isEmpty else {
+            finish(2, externalDisplays.displays.isEmpty
+                ? "error: no external display is connected"
+                : "error: no external display matches \"\(arguments[0])\". Run `overbright displays`.")
+            return
+        }
+
+        let action = arguments[1].lowercased().replacingOccurrences(of: "%", with: "")
+        let step = ConfigStore.shared.config.keyStep
+        var levels: [(CGDirectDisplayID, Double)] = []
+        for display in targets {
+            switch action {
+            case "up": levels.append((display.id, ExternalBrightness.next(
+                from: display.level, direction: .increase, step: step, minimum: display.minimum)))
+            case "down": levels.append((display.id, ExternalBrightness.next(
+                from: display.level, direction: .decrease, step: step, minimum: display.minimum)))
+            default:
+                let text = action.replacingOccurrences(of: "\u{2212}", with: "-")
+                guard let percent = Double(text), percent.isFinite,
+                      (display.minimum...100).contains(percent) else {
+                    finish(2, "error: \(display.name) takes \(ExternalBrightness.label(display.minimum)) to 100%, up or down")
+                    return
+                }
+                levels.append((display.id, percent))
+            }
+        }
+
+        let group = DispatchGroup()
+        for (id, level) in levels {
+            group.enter()
+            externalDisplays.setLevel(level, for: id) { group.leave() }
+        }
+        group.notify(queue: .main) { [weak self] in
+            guard let self else { return }
+            let ids = Set(levels.map(\.0))
+            finish(0, self.displaysText(only: ids))
+        }
+    }
+
+    private func displaysText(only ids: Set<CGDirectDisplayID>? = nil) -> String {
+        let displays = externalDisplays.displays.filter { ids?.contains($0.id) ?? true }
+        if displays.isEmpty { return "no external displays" }
+        return displays.map {
+            "\($0.id)\t\($0.name)\t\($0.control.rawValue)\t\(ExternalBrightness.label($0.level))"
+        }.joined(separator: "\n")
     }
 
     /// Enabling is asynchronous: macOS takes a moment to open EDR headroom.
@@ -308,6 +389,15 @@ final class CommandServer {
                 ["name": $0.name, "level": $0.level] as [String: Any]
             },
             "configProblems": ConfigStore.shared.problems,
+            "externalDisplays": externalDisplays.displays.map {
+                [
+                    "id": Int($0.id),
+                    "name": $0.name,
+                    "control": $0.control.rawValue,
+                    "level": Int($0.level.rounded()),
+                    "minimum": Int($0.minimum.rounded())
+                ] as [String: Any]
+            },
             "version": AppInfo.version
         ]
         if case let .unavailable(reason) = snapshot.state {

@@ -32,6 +32,15 @@ struct Config: Equatable {
     var showPercentage: Bool = false
     /// "auto", "en" or "zh".
     var language: String = "auto"
+    /// Show external displays in the menu and control their brightness.
+    var externalDisplays: Bool = true
+    /// Control+F1/F2 adjust external displays (needs the Accessibility permission).
+    var externalKeys: Bool = true
+    /// Show a brightness indicator on an external display while it changes.
+    var showHUD: Bool = true
+    /// Let external displays go below 0%: the backlight stays at its minimum
+    /// and the picture is darkened in software, down to -90%.
+    var extraDimming: Bool = true
     var presets: [Preset] = []
 
     /// Problems found while decoding. Each one names the entry at fault.
@@ -39,7 +48,8 @@ struct Config: Equatable {
 
     static let knownKeys: Set<String> = [
         "maxLevel", "keyStep", "fineKeyStep", "brightnessKeys",
-        "enableOnLaunch", "showPercentage", "language", "presets"
+        "enableOnLaunch", "showPercentage", "language", "presets",
+        "externalDisplays", "externalKeys", "showHUD", "extraDimming"
     ]
 
     enum ParseError: Error, Equatable {
@@ -79,6 +89,10 @@ struct Config: Equatable {
         brightnessKeys = flag("brightnessKeys", in: dictionary, default: brightnessKeys)
         enableOnLaunch = flag("enableOnLaunch", in: dictionary, default: enableOnLaunch)
         showPercentage = flag("showPercentage", in: dictionary, default: showPercentage)
+        externalDisplays = flag("externalDisplays", in: dictionary, default: externalDisplays)
+        externalKeys = flag("externalKeys", in: dictionary, default: externalKeys)
+        showHUD = flag("showHUD", in: dictionary, default: showHUD)
+        extraDimming = flag("extraDimming", in: dictionary, default: extraDimming)
 
         if let raw = dictionary["language"] {
             if let value = raw as? String, Self.languages.contains(value.lowercased()) {
@@ -134,6 +148,10 @@ struct Config: Equatable {
           "enableOnLaunch": \(enableOnLaunch),
           "showPercentage": \(showPercentage),
           "language": \(quote(language)),
+          "externalDisplays": \(externalDisplays),
+          "externalKeys": \(externalKeys),
+          "showHUD": \(showHUD),
+          "extraDimming": \(extraDimming),
           "presets": \(presetBlock)
         }
 

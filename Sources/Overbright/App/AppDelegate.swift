@@ -12,6 +12,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var brightnessKeyService: BrightnessKeyService?
     private var statusController: StatusItemController?
     private var commandServer: CommandServer?
+    private var externalDisplays: ExternalDisplayManager?
+    private var hud: BrightnessHUD?
     private var signalSources: [DispatchSourceSignal] = []
     private var brightnessKeyHealthTimer: Timer?
     private var brightnessKeysWereRunning = false
@@ -42,16 +44,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ) ?? false
         }
         self.brightnessKeyService = brightnessKeyService
-        statusController = StatusItemController(
+
+        let externalDisplays = ExternalDisplayManager()
+        externalDisplays.isEnabled = ConfigStore.shared.config.externalDisplays
+        externalDisplays.extraDimming = ConfigStore.shared.config.extraDimming
+        self.externalDisplays = externalDisplays
+        let hud = BrightnessHUD()
+        self.hud = hud
+        brightnessKeyService.externalHandler = { [weak self] direction, fineGrained in
+            self?.adjustExternalDisplays(direction, fineGrained: fineGrained) ?? false
+        }
+
+        let statusController = StatusItemController(
             boostController: boostController,
-            brightnessKeyService: brightnessKeyService
+            brightnessKeyService: brightnessKeyService,
+            externalDisplays: externalDisplays
         )
+        self.statusController = statusController
+        externalDisplays.onListChange = { [weak statusController] in
+            statusController?.rebuildMenu()
+        }
+        externalDisplays.onLevelChange = { [weak statusController] display in
+            statusController?.renderExternal(display)
+        }
+        externalDisplays.displaysDidChange()
 
         brightnessKeyService.isEnabled = ConfigStore.shared.config.brightnessKeys
 
         let commandServer = CommandServer(
             boostController: boostController,
-            brightnessKeyService: brightnessKeyService
+            brightnessKeyService: brightnessKeyService,
+            externalDisplays: externalDisplays
         )
         commandServer.start()
         self.commandServer = commandServer
@@ -90,13 +113,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The config file was saved. Everything it controls is applied here.
     private func configDidChange() {
         applyConfigToModels()
+        externalDisplays?.isEnabled = ConfigStore.shared.config.externalDisplays
+        externalDisplays?.extraDimming = ConfigStore.shared.config.extraDimming
         boostController?.capDidChange()
         brightnessKeyService?.isEnabled = ConfigStore.shared.config.brightnessKeys
         brightnessKeyService?.start()
         statusController?.rebuildMenu()
     }
 
+    /// Control+F1/F2. Returns false (so macOS keeps the key) when there is no
+    /// external display or the feature is off.
+    private func adjustExternalDisplays(_ direction: BrightnessKeyDirection, fineGrained: Bool) -> Bool {
+        let config = ConfigStore.shared.config
+        guard config.externalDisplays, config.externalKeys,
+              let externalDisplays, !externalDisplays.displays.isEmpty else { return false }
+        let changed = externalDisplays.step(
+            direction,
+            by: fineGrained ? config.fineKeyStep : config.keyStep
+        )
+        if config.showHUD {
+            changed.forEach { hud?.show($0) }
+        }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        externalDisplays?.restoreSoftwareDimming()
         brightnessKeyService?.stop()
         boostController?.shutdown()
     }
@@ -162,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Darwin.signal(signalNumber, SIG_IGN)
             let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
             source.setEventHandler { [weak self] in
+                self?.externalDisplays?.restoreSoftwareDimming()
                 self?.brightnessKeyService?.stop()
                 self?.boostController?.shutdown()
                 NSApp.terminate(nil)
@@ -177,6 +220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func systemDidWake() {
         boostController?.resume(from: .systemSleep)
+        externalDisplays?.displaysDidChange(force: true)
     }
 
     @objc private func screenWillSleep() {
@@ -202,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func displayParametersDidChange() {
         boostController?.displayParametersDidChange()
+        externalDisplays?.displaysDidChange()
     }
 
     private func configureBrightnessKeys() {
