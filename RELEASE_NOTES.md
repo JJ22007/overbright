@@ -7,6 +7,13 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 - Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
 - To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
+## Unreleased
+
+- **One brightness scale, one indicator.** F1/F2 move along a single 0–160% scale on the built-in display: the backlight up to 100%, the boost above. Overbright shows one indicator for all of it (top centre, 16 segments) instead of macOS's below 100% and its own above.
+- **Boost fixed for macOS 27.2.** macOS 27.2 stopped scaling ordinary content when an app sets a gamma table, so the boost jumped to full brightness at 101%, barely changed between 100 and 160%, looked washed out, and took 15–20 s to come back down. The new panel method follows the live backlight and keeps every step prompt: measured, each press reaches 90% of its change in about 0.02 s, and 160→100 is immediate. `"boostMethod"` can force the old behaviour.
+- **Measuring tools** for contributors and agents: `scripts/brightness-log.sh` and `scripts/brightness-check.sh`.
+- `overbright key up|down`, `set` and `up`/`down` across the whole scale, and `scale`, `scaleTop`, `boostMethod` in `status --json`.
+
 ## 2.2
 
 - **New menu bar icon.** A plain monochrome sun from [Lucide](https://lucide.dev): full rays while boosted, dotted rays at standard brightness, and a warning triangle when the boost is unavailable. It follows light and dark menu bars like the system's own icons.

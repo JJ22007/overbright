@@ -337,6 +337,12 @@ final class ExternalDisplayManager {
         dimmer.apply(factor)
     }
 
+    /// Call right after resetting ColorSync, so software dimming does not wait
+    /// for the next integrity pass.
+    func reapplySoftwareDimmingNow() {
+        reapplySoftwareDimming()
+    }
+
     /// Anything that resets ColorSync (including Overbright's own recovery of
     /// the built-in display) wipes gamma dimming. Put it back.
     private func reapplySoftwareDimming() {

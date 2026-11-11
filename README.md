@@ -18,7 +18,7 @@ Overbright opens the extra brightness that a Liquid Retina XDR display normally 
 ## Features
 
 - **Brightness past 100%.** A slider from 100% to 160%. The boost is limited by the headroom macOS reports at that moment, so it never asks the panel for more than it offers.
-- **F1/F2 keep going.** At full native brightness, F2 continues into the XDR range and F1 walks back down, with no jump at the boundary.
+- **One scale, one indicator.** F1/F2 move along a single 0–160% scale: 0–100% is the backlight, 100–160% the boost. Overbright shows one indicator for all of it, and every press changes the brightness within a few hundredths of a second.
 - **External displays too.** Plug a display in and it appears in the menu with its own slider. Control+F1/F2 dims or brightens it, with an on-screen indicator. Most monitors are driven over DDC/CI, exactly like their own buttons; the rest are dimmed in software.
 - **Stays out of the system's way.** Auto-brightness, Control Center and sleep keep working. Overbright follows them instead of fighting them, and puts everything back when you turn it off or quit.
 - **One config file, hot reloaded.** Save the file and the change applies within a second or two. Mistakes show up in the menu instead of breaking the app.
@@ -81,7 +81,16 @@ How each display is controlled is decided automatically:
 
 DDC/CI needs Apple Silicon. On an Intel Mac every external display uses software dimming. Some monitors have DDC/CI switched off in their own on-screen menu; turn it on there.
 
-**F1 and F2.** From 0 to 100% the keys behave as they always have. At 100%, F2 continues upward in 6.25% steps and F1 comes back down. Hold Option+Shift for quarter steps, as elsewhere in macOS. This needs the Accessibility permission, because Overbright has to catch the key before macOS does: choose **Allow F1 / F2…** in the menu. Without the permission the keys keep their normal behaviour and the menu still works.
+**F1 and F2: one scale from 0 to 160%.** The built-in display's brightness is one scale. 0–100% is the backlight, the same 16 steps as macOS's own keys. Above 100% the backlight stays at full and the boost takes over, up to 160% (`maxLevel`). Every press moves 6.25%; hold Option+Shift for quarter steps. Overbright shows one indicator for the whole scale at the top of the screen: a sun and 16 segments of 10% each, the last six after a small gap being the boost.
+
+Handling the keys needs the Accessibility permission, because Overbright has to catch them before macOS does: choose **Allow F1 / F2…** in the menu. Without it, macOS keeps the keys and its own indicator, and the boost is in the menu.
+
+| You press | What happens |
+|---|---|
+| F1/F2 below 100% | The backlight moves one step, like macOS's own keys. |
+| F2 at 100% | The boost starts. The very first step from an idle display takes about 0.3 s, because macOS first ramps the backlight up to its peak; every later step is immediate. |
+| F1 at 106% | Back to 100% at once. macOS keeps the backlight at its peak for about 15 seconds afterwards; Overbright holds the picture at standard brightness until it has come down. |
+| Option+F1/F2 | Opens Displays settings, as usual. |
 
 ## Make it yours
 
@@ -101,7 +110,7 @@ The config lives at `~/.config/overbright/config.json`. Open it from the menu wi
 | Field | Default | Meaning |
 |---|---|---|
 | `maxLevel` | `160` | The highest level the slider, the keys and the CLI can reach, from 101 to 160. Lower it if you want a gentler ceiling. |
-| `keyStep` | `6.25` | Percent added per F1/F2 press above 100%. |
+| `keyStep` | `6.25` | Percent per F1/F2 press, across the whole 0–160% scale (`up`/`down` on the command line too). |
 | `fineKeyStep` | `1.5625` | Percent added per press with Option+Shift held. |
 | `brightnessKeys` | `true` | Let F1/F2 continue past 100%. Set `false` to use only the menu and the CLI; the app then never asks for Accessibility. |
 | `enableOnLaunch` | `false` | Turn the boost on when the app starts, at the last level you used. |
@@ -110,6 +119,7 @@ The config lives at `~/.config/overbright/config.json`. Open it from the menu wi
 | `externalDisplays` | `true` | Show external displays in the menu and control their brightness. |
 | `externalKeys` | `true` | Control+F1/F2 adjust external displays. Needs `brightnessKeys` and the Accessibility permission. |
 | `showHUD` | `true` | Show a brightness indicator on an external display while it changes. |
+| `boostMethod` | `"auto"` | How the boost brightens the built-in display: `"panel"` (macOS 27.2 and later) or `"classic"` (earlier). `"auto"` picks by macOS version; force one only if the boost looks wrong. See [How it works](#how-it-works). |
 | `extraDimming` | `true` | Let external displays go below 0%, down to −90%, by darkening the picture once the backlight is at its minimum. |
 | `presets` | `[]` | Named levels: `name` and `level` (100 to 160). They appear in the menu and work with `overbright preset`. |
 
@@ -138,8 +148,10 @@ Copy from [`examples/`](examples):
 
 ```bash
 overbright status            # off 125%
-overbright set 140           # on 140%
-overbright up                # one key step brighter
+overbright set 140           # on 140% (the boost)
+overbright set 50            # the backlight at 50%, boost off
+overbright up                # one step along the 0–160% scale
+overbright key down          # exactly what F1 does, indicator included
 overbright preset outdoors   # match a preset by name or prefix
 overbright off               # back to standard brightness
 overbright displays          # 2  DELL P2723DE  ddc  100%
@@ -161,6 +173,9 @@ overbright status --json
   "maxLevel" : 160,
   "potentialEdrHeadroom" : 16,
   "presets" : [],
+  "scale" : 125,
+  "scaleTop" : 160,
+  "boostMethod" : "panel",
   "state" : "on",
   "supported" : true,
   "version" : "2.0"
@@ -220,13 +235,20 @@ Prefer to do it by hand? Each file has one job:
 
 ## How it works
 
-macOS gives an XDR display brightness "headroom" above standard white only while something on screen is HDR. Overbright keeps a tiny, invisible HDR layer on the built-in display so that headroom opens, then scales the display's gamma table so ordinary content uses it. The percentage is a request: the applied gain follows a conservative curve and is always capped by the headroom macOS reports right now, which shrinks in bright rooms and when the display is warm.
+macOS gives an XDR display brightness "headroom" above standard white only while something on screen is HDR. Overbright keeps a tiny, invisible HDR layer on the built-in display so that headroom opens. macOS then drives the backlight up to its peak (1600 nits on a MacBook Pro) and normally scales ordinary content back down so it looks unchanged. Overbright uses the gamma table to let ordinary white take part of that light. How depends on the macOS version (`boostMethod`):
+
+- **panel** (macOS 27.2 and later). Once an app sets a gamma table, macOS no longer scales ordinary content down, so white would jump straight to the full backlight. Overbright reads the backlight macOS is actually driving, live, and sets the table to *wanted brightness ÷ backlight*: 100% on a 1600-nit backlight is 0.375, 160% is 0.6. The table never goes above 1, so nothing clips. It follows every ramp of the backlight at 120 Hz, which is why leaving the boost is immediate and entering it never overshoots. When the boost ends, the table keeps white at standard brightness until macOS has brought the backlight back down, then hands the original table back.
+- **classic** (earlier macOS). macOS scales ordinary content after the gamma table, so a table above 1 lifts white into the headroom: 160% is a table endpoint of about 1.6, capped by the headroom macOS reports.
+
+The percentage is a request on top of standard white (600 nits at full backlight): 160% asks for about 960 nits.
 
 Before changing anything, Overbright records the display's original state, and it writes a recovery marker so that even after a crash or a forced quit the next launch restores standard brightness. Reading and setting the system backlight goes through macOS's DisplayServices framework, a private interface that a future macOS version could change.
 
 ## Limits and cautions
 
 - **The percentage is not a measurement.** 160% is a requested boost, not 1,600 nits. Peak HDR brightness is not sustainable across the full screen.
+- **How the boost was measured.** No sensor on a Mac sees its own screen, so `scripts/brightness-check.sh` estimates white from two exact readings, the live backlight and the gamma table (see [AGENTS.md](AGENTS.md)). The panel method rests on that model; if the boost ever looks wrong on your macOS, try `"boostMethod": "classic"`.
+- **Quitting during the 15-second hold.** If you quit Overbright right after leaving the boost, the original table goes back at once while macOS may still be holding the backlight at its peak, so the screen can look brighter for up to about 15 seconds.
 - **Brighter means warmer.** Higher brightness uses more power and makes more heat. macOS may dim the display on its own; Overbright does not override that.
 - **Don't run two of these at once.** BetterDisplay, BrightIntosh, Lunar, f.lux and similar tools also change the gamma table. Overbright refuses to turn on when it detects an already boosted table.
 - **Not for color-critical work.** Scaling the gamma table can clip highlight detail in HDR photos and video. Restore standard brightness first.

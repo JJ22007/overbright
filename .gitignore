@@ -6,3 +6,4 @@ outputs/*.app/
 outputs/*.zip
 *.log
 .DS_Store
+outputs/brightness-check/

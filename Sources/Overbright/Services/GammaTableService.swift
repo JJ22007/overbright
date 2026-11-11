@@ -76,6 +76,26 @@ final class GammaTableService {
         return true
     }
 
+    /// Scales the baseline by an exact factor, below 1 as well as above. Used by
+    /// the panel method, which darkens ordinary content on a brighter backlight.
+    @discardableResult
+    func apply(exactFactor proposed: Float) -> Bool {
+        guard var table = baseline, let displayID else { return false }
+        let factor = proposed.isFinite
+            ? min(max(proposed, PanelCompensation.minimumFactor), BoostLevel.maximum)
+            : 1
+        for index in table.red.indices {
+            table.red[index] *= factor
+            table.green[index] *= factor
+            table.blue[index] *= factor
+        }
+        guard CGSetDisplayTransferByTable(
+            displayID, table.sampleCount, &table.red, &table.green, &table.blue
+        ) == .success else { return false }
+        appliedFactor = factor
+        return true
+    }
+
     func appearsApplied(tolerance: Float = 0.025) -> Bool {
         guard let baseline, let displayID else { return false }
 
