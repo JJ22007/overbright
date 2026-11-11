@@ -278,31 +278,28 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             item.state = active && target.percentage == snapshot.level.percentage ? .on : .off
         }
 
-        let symbol: String
+        let icon: NSImage
         switch snapshot.state {
         case .off:
-            symbol = "sun.max.circle"
+            icon = MenuBarIcon.off
             statusTextItem.title = supported
                 ? L10n.tr("Standard brightness", "标准亮度")
                 : L10n.tr("This display has no XDR headroom", "此屏幕不支持增亮")
         case .engaging:
-            symbol = "sun.max.circle.fill"
+            icon = MenuBarIcon.on
             statusTextItem.title = L10n.tr("Starting…", "正在恢复…")
         case .active:
-            symbol = "sun.max.circle.fill"
+            icon = MenuBarIcon.on
             statusTextItem.title = L10n.tr("Boost is on", "增亮已开启")
         case let .unavailable(message):
-            symbol = "exclamationmark.triangle"
+            icon = MenuBarIcon.problem
             statusTextItem.title = L10n.tr(
                 "Unavailable · turn on to retry", "暂不可用 · 点击开启重试"
             )
             statusTextItem.toolTip = message
         }
 
-        statusItem.button?.image = NSImage(
-            systemSymbolName: symbol,
-            accessibilityDescription: AppInfo.name
-        )
+        statusItem.button?.image = icon
         statusItem.button?.title = config.showPercentage && snapshot.state == .active
             ? "\(snapshot.level.percentage)%"
             : ""

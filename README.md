@@ -242,6 +242,8 @@ Overbright is the new name of Display Boost from version 2.0. The app has a new 
 
 Using EDR headroom together with the gamma table is a technique known from tools such as [BrightIntosh](https://github.com/niklasr22/BrightIntosh) and [BetterDisplay](https://github.com/waydabber/BetterDisplay). If you want a mature tool with many more features, use one of those. Overbright has a different goal: to be small enough that you can make it entirely your own.
 
+The menu bar icons are from [Lucide](https://lucide.dev) (ISC, see [LICENSES/lucide.txt](LICENSES/lucide.txt)).
+
 ## License
 
 [MIT](LICENSE)

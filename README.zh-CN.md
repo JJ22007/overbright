@@ -225,6 +225,8 @@ macOS 只有在屏幕上有 HDR 内容时，才会给 XDR 屏幕开放高于标�
 
 结合 EDR 余量和 Gamma 表来增亮，是 [BrightIntosh](https://github.com/niklasr22/BrightIntosh)、[BetterDisplay](https://github.com/waydabber/BetterDisplay) 等工具已经在用的做法。如果你想要一个功能更多、更成熟的工具，请用它们。Overbright 的目标不一样：小到你可以把它完全改成自己的。
 
+菜单栏图标来自 [Lucide](https://lucide.dev)(ISC 许可,见 [LICENSES/lucide.txt](LICENSES/lucide.txt))。
+
 ## 许可证
 
 [MIT](LICENSE)
