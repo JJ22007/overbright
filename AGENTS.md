@@ -57,6 +57,7 @@ All sources are in `Sources/Overbright/`.
 | `Services/BrightnessKeyService.swift` | The event tap for F1/F2; the only code that needs Accessibility |
 | `Services/ConfigStore.swift` | Loads `config.json`, creates it on first run, hot reloads |
 | `Services/InstanceLock.swift` | One running copy at a time |
+| `Views/MenuBarIcon.swift` | Menu bar glyphs (Lucide SVG, template images): on, off, problem |
 | `Views/BrightnessHUD.swift` | The on-screen indicator for external display changes |
 | `Views/StatusItemController.swift` | Menu bar icon and menu, rebuilt on every config change |
 | `App/CLI.swift` | The `overbright` command (client) and `CommandServer` (inside the app) |
