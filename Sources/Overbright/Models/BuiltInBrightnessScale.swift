@@ -58,13 +58,6 @@ enum BuiltInBrightnessScale {
         }
     }
 
-    /// The segment index (0-based) just above 100%, where the boost starts;
-    /// nil when the scale ends at 100%.
-    static func boostSegment(top: Double) -> Int? {
-        guard top > 100.0001 else { return nil }
-        return Int((100 / (top / Double(segmentCount))).rounded())
-    }
-
     /// A boost only makes sense on top of a full backlight. When macOS or the
     /// user lowers the backlight clearly below full while boosted (automatic
     /// brightness, Control Center), the boost ends instead of staying on top of

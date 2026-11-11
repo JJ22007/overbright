@@ -6,7 +6,7 @@ import AppKit
 ///
 /// Styled after the macOS 27.2 indicator: a glass capsule at the top centre of
 /// the screen with a sun and a 16-segment bar. Each segment is 10% of the
-/// scale; the last six are the boost above 100%, set off by a wider gap.
+/// scale, evenly spaced; the last six are the boost above 100%.
 @MainActor
 final class ScaleHUD {
     private static let size = NSSize(width: 316, height: 44)
@@ -78,10 +78,7 @@ final class ScaleHUD {
         let symbol = percent > 100.0001 ? "sun.max.fill" : (percent < 50 ? "sun.min.fill" : "sun.max")
         icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         valueLabel.stringValue = "\(Int(percent.rounded()))%"
-        segments.set(
-            fills: BuiltInBrightnessScale.segmentFills(percent: percent, top: top),
-            boostStart: BuiltInBrightnessScale.boostSegment(top: top)
-        )
+        segments.set(fills: BuiltInBrightnessScale.segmentFills(percent: percent, top: top))
 
         let visible = screen.visibleFrame
         let target = NSRect(
@@ -122,13 +119,11 @@ final class ScaleHUD {
     }
 }
 
-/// Sixteen rounded segments, each filled 0...1. The boost segments sit after a
-/// wider gap so the 100% boundary is visible without colour.
+/// Sixteen rounded, evenly spaced segments, each filled 0...1.
 private final class SegmentBar: NSView {
     private var tracks: [CALayer] = []
     private var fills: [CALayer] = []
     private var values: [Double] = Array(repeating: 0, count: BuiltInBrightnessScale.segmentCount)
-    private var boostStart: Int?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -148,24 +143,20 @@ private final class SegmentBar: NSView {
 
     override var wantsUpdateLayer: Bool { true }
 
-    func set(fills newValues: [Double], boostStart newBoostStart: Int?) {
+    func set(fills newValues: [Double]) {
         values = newValues
-        boostStart = newBoostStart
         needsDisplay = true
     }
 
     override func updateLayer() {
         let count = CGFloat(tracks.count)
         let gap: CGFloat = 3
-        let boostGap: CGFloat = boostStart == nil ? gap : 8
-        let width = (bounds.width - gap * (count - 2) - boostGap) / count
+        let width = (bounds.width - gap * (count - 1)) / count
         var x: CGFloat = 0
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.1)
         for index in tracks.indices {
-            if index > 0 {
-                x += (index == boostStart) ? boostGap : gap
-            }
+            if index > 0 { x += gap }
             let track = tracks[index]
             track.frame = NSRect(x: x, y: 0, width: width, height: bounds.height)
             track.cornerRadius = bounds.height / 2

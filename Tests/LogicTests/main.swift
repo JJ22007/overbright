@@ -362,8 +362,6 @@ expect(fills.count == 16 && fills[9] == 1 && abs(fills[10] - 0.5) < 0.0001 && fi
        "the 16 segments cover 0–160%, 10% each")
 expect(BuiltInBrightnessScale.segmentFills(percent: 160, top: 160).allSatisfy { $0 == 1 }, "all segments are full at the top")
 expect(BuiltInBrightnessScale.segmentFills(percent: 0, top: 160).allSatisfy { $0 == 0 }, "no segment is lit at 0%")
-expect(BuiltInBrightnessScale.boostSegment(top: 160) == 10, "the boost starts at the 11th segment")
-expect(BuiltInBrightnessScale.boostSegment(top: 100) == nil, "no boost segment without boost")
 expect(BuiltInBrightnessScale.backlightDropEndsBoost(previous: 1, current: 0.5), "a clear backlight drop ends the boost")
 expect(!BuiltInBrightnessScale.backlightDropEndsBoost(previous: 1, current: 0.97), "a tiny backlight wobble keeps the boost")
 expect(!BuiltInBrightnessScale.backlightDropEndsBoost(previous: 0.5, current: 0.9), "a backlight rise never ends the boost")
