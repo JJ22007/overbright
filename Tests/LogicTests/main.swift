@@ -414,6 +414,17 @@ expect(DirectPanel.targetNits(standard: 720, level: 1, ceiling: 1000) == 720, "1
 expect(DirectPanel.targetNits(standard: 1100, level: 1.2, ceiling: 1000) == 1100, "a ceiling below standard white never dims")
 expect(DirectPanel.targetNits(standard: 0, level: 1.5, ceiling: 1000) == nil, "no standard white, no target")
 
+// Direct method: what to write back when the boost ends.
+let stale = DirectPanel.restore(savedCap: 600, systemStandard: 600, currentLevel: 996, peak: 1600)
+expect(stale?.cap == 600 && stale?.level == 600, "end: a boosted level comes down to standard white, not to a saved ramp value")
+let ambientMoved = DirectPanel.restore(savedCap: 720, systemStandard: 600, currentLevel: 943, peak: 1600)
+expect(ambientMoved?.cap == 600 && ambientMoved?.level == 600, "end: standard white as macOS reports it now")
+let userDimmed = DirectPanel.restore(savedCap: 600, systemStandard: 600, currentLevel: 300, peak: 1600)
+expect(userDimmed?.cap == 600 && userDimmed?.level == nil, "end: a level below standard is macOS's own and is left alone")
+let hdrSystem = DirectPanel.restore(savedCap: 600, systemStandard: 1600, currentLevel: 996, peak: 1600)
+expect(hdrSystem?.cap == 600, "end: an unbelievable system standard falls back to the saved cap")
+expect(DirectPanel.restore(savedCap: nil, systemStandard: nil, currentLevel: 996, peak: 1600) == nil, "end: nothing believable, nothing written")
+
 // overbright report: did the direct boost reach the panel?
 expect(BoostCheck.judge(boosted: false, method: "direct", targetNits: 900, panelNits: 600) == .notBoosted, "report: boost off is not checked")
 expect(BoostCheck.judge(boosted: true, method: "overlay", targetNits: nil, panelNits: 1600) == .notDirect, "report: overlay cannot be judged from the backlight")

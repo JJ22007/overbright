@@ -62,7 +62,6 @@ final class DirectPanelService {
               let current = Self.read(framebuffer, "IOMFBBrightnessLevel") else { return false }
         if defaults.object(forKey: Key.savedCap) == nil {
             defaults.set(cap, forKey: Key.savedCap)
-            defaults.set(current, forKey: Key.savedLevel)
             defaults.synchronize()
         }
         peakNits = readings.peakNits
@@ -155,12 +154,18 @@ final class DirectPanelService {
     }
 
     private static func restoreSaved(_ entry: io_registry_entry_t, defaults: UserDefaults) -> Bool {
-        guard let cap = defaults.object(forKey: Key.savedCap) as? Double else { return true }
-        let level = (defaults.object(forKey: Key.savedLevel) as? Double) ?? cap
-        // These are macOS's own values from before the boost, so they bound themselves.
-        let limit = max(PanelLightService.nits(entry, "limit_max_physical_brightness") ?? 0, cap)
-        let ok = set(entry, "IOMFBBrightnessLevel", min(level, cap), limit: limit)
-            && set(entry, "BLNitsCap", cap, limit: limit)
+        guard defaults.object(forKey: Key.savedCap) != nil else { return true }
+        let peak = PanelLightService.nits(entry, "limit_max_physical_brightness")
+        guard let values = DirectPanel.restore(
+            savedCap: defaults.object(forKey: Key.savedCap) as? Double,
+            systemStandard: PanelLightService.systemStandardNits(),
+            currentLevel: read(entry, "IOMFBBrightnessLevel"),
+            peak: peak
+        ) else { return false }
+        // Standard white is below the cap we wrote, so the level comes down first.
+        let limit = max(peak ?? 0, values.cap)
+        let ok = (values.level.map { set(entry, "IOMFBBrightnessLevel", $0, limit: limit) } ?? true)
+            && set(entry, "BLNitsCap", values.cap, limit: limit)
         if ok {
             defaults.removeObject(forKey: Key.savedCap)
             defaults.removeObject(forKey: Key.savedLevel)

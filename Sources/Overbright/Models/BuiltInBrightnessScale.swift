@@ -136,6 +136,26 @@ enum DirectPanel {
         var newStandard: Double?
     }
 
+    /// What to write when the boost ends (or after a crash). The cap goes back
+    /// to standard white: what macOS reports now if it is believable, else the
+    /// cap saved before the boost. The level is only lowered, to that standard,
+    /// and only while it is above it: a level at or below standard is macOS's
+    /// own (the user dimmed, or macOS already took over) and is left alone.
+    /// A level saved before the boost is never written back: it can be a value
+    /// caught in the middle of a macOS ramp (160 nits was seen), and writing it
+    /// back left the panel there.
+    static func restore(savedCap: Double?, systemStandard: Double?, currentLevel: Double?,
+                        peak: Double?) -> (cap: Double, level: Double?)? {
+        let limit = (peak ?? .infinity) * PanelSupport.edrCapShare
+        func believable(_ value: Double?) -> Double? {
+            guard let value, value.isFinite, value > 50, value < limit else { return nil }
+            return value
+        }
+        guard let standard = believable(systemStandard) ?? believable(savedCap) else { return nil }
+        guard let currentLevel, currentLevel.isFinite, currentLevel > standard + 1 else { return (standard, nil) }
+        return (standard, standard)
+    }
+
     static func settled(cap: Double, level: Double, writtenCap: Double?, standard: Double?,
                         ceiling: Double, peak: Double?) -> Settled {
         var effectiveStandard = standard ?? 0
