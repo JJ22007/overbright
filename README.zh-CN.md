@@ -140,6 +140,8 @@ DDC/CI 需要 Apple 芯片的 Mac，Intel Mac 上所有副屏都走软件调暗�
 | `externalKeys` | `true` | 用 Control+F1/F2 调节副屏。需要 `brightnessKeys` 开启并授予「辅助功能」权限。 |
 | `showHUD` | `true` | 调节副屏时在那块屏上显示亮度指示。 |
 | `maxNits` | `1000` | direct 方式的上限，单位尼特，700 到 1300。1000 是全屏能长时间保持的亮度；再往上，面板自己的过热保护会在几秒内把背光压下来。 |
+| `lowBatteryOff` | `false` | 电量百分比，5 到 95。没插电、电量降到这个值时，关掉增亮一次；之后你再打开，它不会再关。 |
+| `toggleShortcut` | `false` | 开关增亮的全局快捷键，比如 `"ctrl+opt+cmd+b"`：一个字母、数字、F 键或 `space`，再加 Command、Control 或 Option。不需要辅助功能权限。 |
 | `boostMethod` | `"auto"` | 增亮的实现方式：`"direct"`（macOS 27.2 及以后）、`"overlay"` 或 `"classic"`（更早的版本）。`"auto"` 按系统版本自动选择；只有增亮看起来不对时才需要手动指定。见[工作原理](#工作原理)。 |
 | `extraDimming` | `true` | 允许副屏低于 0%（最低 −90%）：背光到最低后，再把画面压暗。 |
 | `presets` | `[]` | 命名亮度：`name` 和 `level`（100 到 400）。会出现在菜单里，也能用 `overbright preset` 调用。 |
@@ -160,6 +162,7 @@ overbright check ~/.config/overbright/config.json
 | [`presets.json`](examples/presets.json) | 三个命名亮度，菜单栏显示百分比 |
 | [`fine-steps.json`](examples/fine-steps.json) | 更小的 F1/F2 步进，调得更细 |
 | [`menu-only.json`](examples/menu-only.json) | 不拦截按键，不需要「辅助功能」权限 |
+| [`on-battery.json`](examples/on-battery.json) | 电量 20% 时关掉增亮；Control+Option+Command+B 开关增亮 |
 | [`always-on.json`](examples/always-on.json) | 启动即增亮，上限 140% |
 | [`no-external.json`](examples/no-external.json) | 不管副屏 |
 

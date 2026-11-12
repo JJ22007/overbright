@@ -144,6 +144,8 @@ The config lives at `~/.config/overbright/config.json`. Open it from the menu wi
 | `externalKeys` | `true` | Control+F1/F2 adjust external displays. Needs `brightnessKeys` and the Accessibility permission. |
 | `showHUD` | `true` | Show a brightness indicator on an external display while it changes. |
 | `maxNits` | `1000` | Ceiling of the direct method, in nits, from 700 to 1300. 1000 is what the panel holds across the whole screen; above it the panel's own thermal limit pulls the backlight down within seconds. |
+| `lowBatteryOff` | `false` | A battery percentage, 5 to 95. When the battery falls to it while unplugged, the boost ends once; turn it back on and it stays on. |
+| `toggleShortcut` | `false` | A global shortcut that switches the boost, such as `"ctrl+opt+cmd+b"`: a letter, digit, F-key or `space`, with Command, Control or Option. Needs no Accessibility permission. |
 | `boostMethod` | `"auto"` | How the boost brightens the built-in display: `"direct"` (macOS 27.2 and later), `"overlay"` or `"classic"` (earlier). `"auto"` picks by macOS version; force one only if the boost looks wrong. See [How it works](#how-it-works). |
 | `extraDimming` | `true` | Let external displays go below 0%, down to −90%, by darkening the picture once the backlight is at its minimum. |
 | `presets` | `[]` | Named levels: `name` and `level` (100 to 400). They appear in the menu and work with `overbright preset`. |
@@ -164,6 +166,7 @@ Copy from [`examples/`](examples):
 | [`presets.json`](examples/presets.json) | Three named levels and the percentage in the menu bar |
 | [`fine-steps.json`](examples/fine-steps.json) | Smaller F1/F2 steps for precise control |
 | [`menu-only.json`](examples/menu-only.json) | No key interception and no Accessibility permission |
+| [`on-battery.json`](examples/on-battery.json) | Boost ends at 20% battery; Control+Option+Command+B switches it |
 | [`always-on.json`](examples/always-on.json) | Boost from launch, capped at 140% |
 | [`no-external.json`](examples/no-external.json) | Leave external displays alone |
 

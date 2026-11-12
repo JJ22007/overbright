@@ -48,6 +48,12 @@ struct Config: Equatable {
     var boostMethod: String = "auto"
     /// The direct method's ceiling in nits.
     var maxNits: Double = DirectPanel.defaultCeiling
+    /// End the boost when the battery falls to this percent while unplugged.
+    /// nil (the default) never does.
+    var lowBatteryOff: Double? = nil
+    /// A global shortcut that switches the boost, such as "ctrl+opt+cmd+b".
+    /// nil (the default) registers none.
+    var toggleShortcut: String? = nil
     var presets: [Preset] = []
 
     /// Problems found while decoding. Each one names the entry at fault.
@@ -56,7 +62,8 @@ struct Config: Equatable {
     static let knownKeys: Set<String> = [
         "maxLevel", "keyStep", "fineKeyStep", "brightnessKeys",
         "enableOnLaunch", "showPercentage", "language", "presets",
-        "externalDisplays", "externalKeys", "showHUD", "extraDimming", "boostMethod", "maxNits"
+        "externalDisplays", "externalKeys", "showHUD", "extraDimming", "boostMethod", "maxNits",
+        "lowBatteryOff", "toggleShortcut"
     ]
 
     enum ParseError: Error, Equatable {
@@ -116,6 +123,20 @@ struct Config: Equatable {
             }
         }
         maxNits = number("maxNits", in: dictionary, range: DirectPanel.ceilingRange, default: maxNits)
+        if let raw = dictionary["lowBatteryOff"], !(raw is NSNull), !(Self.isBoolean(raw) && (raw as? Bool) == false) {
+            if Self.isBoolean(raw) {
+                warnings.append("\"lowBatteryOff\" must be a battery percentage or false; using false")
+            } else {
+                lowBatteryOff = number("lowBatteryOff", in: dictionary, range: LowBattery.range, default: 20)
+            }
+        }
+        if let raw = dictionary["toggleShortcut"], !(raw is NSNull), !(Self.isBoolean(raw) && (raw as? Bool) == false) {
+            if let text = raw as? String, Shortcut.parse(text) != nil {
+                toggleShortcut = text
+            } else {
+                warnings.append("\"toggleShortcut\" must look like \"ctrl+opt+cmd+b\" (a letter, digit, F-key or space with Command, Control or Option); using none")
+            }
+        }
 
         if let raw = dictionary["language"] {
             if let value = raw as? String, Self.languages.contains(value.lowercased()) {
@@ -188,6 +209,8 @@ struct Config: Equatable {
           "extraDimming": \(extraDimming),
           "boostMethod": \(quote(boostMethod)),
           "maxNits": \(format(maxNits)),
+          "lowBatteryOff": \(lowBatteryOff.map(format) ?? "false"),
+          "toggleShortcut": \(toggleShortcut.map(quote) ?? "false"),
           "presets": \(presetBlock)
         }
 

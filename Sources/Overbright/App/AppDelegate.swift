@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
     private var brightnessKeyHealthTimer: Timer?
     private var brightnessKeysWereRunning = false
+    private let batteryMonitor = BatteryMonitor()
+    private var lastBattery: LowBattery.Reading?
+    private let shortcutService = ShortcutService()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let instanceLock = InstanceLock.acquire() else {
@@ -87,6 +90,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         ConfigStore.shared.startWatching()
 
+        batteryMonitor.onChange = { [weak self] reading in self?.batteryDidChange(reading) }
+        shortcutService.onPress = { [weak self] in self?.boostController?.toggle() }
+        applyAutomation()
+
         installLifecycleObservers()
         installSignalHandlers()
         configureBrightnessKeys()
@@ -123,7 +130,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         boostController?.capDidChange()
         brightnessKeyService?.isEnabled = ConfigStore.shared.config.brightnessKeys
         brightnessKeyService?.start()
+        applyAutomation()
         statusController?.rebuildMenu()
+    }
+
+    /// `lowBatteryOff` and `toggleShortcut`: both off unless configured.
+    private func applyAutomation() {
+        let config = ConfigStore.shared.config
+        if config.lowBatteryOff != nil {
+            batteryMonitor.start()
+        } else {
+            batteryMonitor.stop()
+            lastBattery = nil
+        }
+        let shortcut = config.toggleShortcut.flatMap(Shortcut.parse)
+        if !shortcutService.register(shortcut), let text = config.toggleShortcut {
+            NSLog("Overbright: macOS refused the shortcut \(text); another app may use it")
+        }
+    }
+
+    private func batteryDidChange(_ reading: LowBattery.Reading) {
+        defer { lastBattery = reading }
+        guard let threshold = ConfigStore.shared.config.lowBatteryOff, let boostController else { return }
+        let boosted = boostController.state == .active || boostController.state == .engaging
+        if LowBattery.shouldTurnOff(previous: lastBattery, current: reading, threshold: threshold, boosted: boosted) {
+            boostController.disable()
+        }
     }
 
     /// F1/F2 on the built-in display: one step along the 0–160% scale, with
