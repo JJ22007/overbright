@@ -21,13 +21,15 @@ import Foundation
 setvbuf(stdout, nil, _IOLBF, 0)
 var outputDirectory = "outputs/light-check"
 var cli = (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/overbright")
+var force = false
 var arguments = CommandLine.arguments.dropFirst().makeIterator()
 while let argument = arguments.next() {
     switch argument {
     case "--out": outputDirectory = arguments.next() ?? outputDirectory
     case "--cli": cli = arguments.next() ?? cli
+    case "--force": force = true
     default:
-        FileHandle.standardError.write(Data("usage: light-check [--out dir] [--cli path]\n".utf8))
+        FileHandle.standardError.write(Data("usage: light-check [--out dir] [--cli path] [--force]\n".utf8))
         exit(2)
     }
 }
@@ -125,6 +127,13 @@ camera.arguments = ["-n", "-W", root + "/.build/BrightnessCamera.app", "--args",
 try? FileManager.default.removeItem(atPath: absoluteCameraFile)
 do { try camera.run() } catch { restore(); fail("could not start the camera meter: \(error)") }
 pump(4)
+
+let room = checkRoom(cameraFile: absoluteCameraFile, setPatch: setPatch, pump: pump, now: now)
+print("room: \(room.summary)")
+if !room.isDark && !force {
+    restore(); camera.terminate()
+    fail("\(RoomCheck.advice)\n(\(room.summary))")
+}
 
 struct Mark { var time: Double; var label: String; var scale: String }
 var marks: [Mark] = []
@@ -243,7 +252,7 @@ let lastPress = presses.last!
 let report = """
 # Light check
 
-\(failures.isEmpty ? "**PASS**" : "**FAIL**"). Measured with the built-in camera, real key presses, \(frames.count) camera frames.
+\(failures.isEmpty ? "**PASS**" : "**FAIL**"). Measured with the built-in camera, real key presses, \(frames.count) camera frames. Room: \(room.summary).\(room.isDark ? "" : " **Not dark enough: not a valid result.**")
 
 Sensitivity: 100% → 160% moved the camera from \(String(format: "%.2f", reference100)) to \(String(format: "%.2f", at160)), \(String(format: "%.2f", sensitivity)) units per unit of log light. Percentages below are light, derived from that.
 
