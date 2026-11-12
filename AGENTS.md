@@ -52,6 +52,7 @@ Logs: `log stream --predicate 'subsystem == "io.github.overbright"'`. The last s
 Use these instead of asking the user whether something looked brighter. Never write CoreBrightness.
 
 - **`scripts/light-check.sh`: the real check.** It measures emitted light with the Mac's built-in camera while pressing real keys, and passes or fails. The camera faces the user, but the screen lights the user's face and the room, so in a dark room each frame's mean brightness follows the screen within a frame. It shows a black screen with a white patch (10% of the area) for about two minutes, then restores the display. The script runs `scripts/brightness-camera.sh`, which builds a small helper app ("Overbright Light Meter", `.build/BrightnessCamera.app`) so macOS asks for the camera once, for it alone. The helper keeps only numbers (mean luma per frame), never an image. Ask the user before the first run (camera permission, dark room, a couple of minutes of white patch).
+  - **Privacy.** The helper keeps numbers only, never an image, and there is no option to save one; do not add one. The raw `camera.tsv` is deleted once the report is written (`--keep-raw` keeps it), and also when the check fails or is interrupted. The helper stops when the check ends, fails, is interrupted or crashes (`--parent`, `<out>.stop`). Any new camera tool must do the same. To revoke: System Settings → Privacy & Security → Camera, or `tccutil reset Camera io.github.jj22007.overbright.camera-meter`; ask the user first. See SECURITY.md.
   - **Dark room first.** Both camera checks start by alternating the patch white and black. If the screen is under 20% of the light the camera sees, they restore the display and stop with advice (lights off, curtains closed, no other screen or lamp in view). `--force` runs anyway, and the report marks it not valid. Tell the user rather than forcing it.
   - **Presses.** 10 × F2 then 10 × F1. For each press it reports the direction, the time to 90%, and any overshoot past start or end. A press fails if it moves the wrong way or overshoots by more than 3%.
   - **Ratio.** A null test that does not depend on the camera's response. At boost X the white patch becomes a grey that emits 1/X of white, so the camera must read the same as plain white at the standard 100%. A level fails beyond ±5%.
@@ -108,6 +109,7 @@ All sources are in `Sources/Overbright/`.
 | `App/AppDelegate.swift` | Start-up, sleep/wake/session observers, applying the config |
 | `App/OverbrightApplication.swift` | Entry point; routes CLI commands; the hardware self-test |
 | `Support/AppInfo.swift` | Name, bundle identifier, repository URL |
+| `Support/CommandToken.swift` | The per-launch secret every `overbright` request must carry (distributed notifications reach sandboxed apps too; see SECURITY.md) |
 | `Support/DisplayLookup.swift` | Finding the built-in display and its screen |
 | `Support/L10n.swift` | Language selection |
 

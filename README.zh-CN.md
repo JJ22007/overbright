@@ -57,6 +57,8 @@ Liquid Retina XDR 屏幕平时只在播放 HDR 视频时才会用到额外的亮
 
 下载版是临时签名，没有经过 Apple 公证。第一次打开会被 macOS 拦下：到 系统设置 → 隐私与安全性，选择 **仍要打开**。不需要关闭 Gatekeeper。
 
+每个发布还附带 `SHA256SUMS.txt`。把它和 zip 放在同一个文件夹，在那里运行 `shasum -a 256 -c SHA256SUMS.txt`，应该显示 `Overbright-universal.zip: OK`。这只能说明 zip 和发布时构建的是同一个文件，不等于签名，详见 [SECURITY.md](SECURITY.md)。
+
 ### 从源码构建
 
 需要 Swift 编译器。没装过的话先运行 `xcode-select --install`。
@@ -261,7 +263,12 @@ Overbright 怎么把内置屏幕调亮，取决于系统版本（`boostMethod`�
 
 - **百分比不是实测亮度**。160% 是请求的增亮幅度，不等于 1600 尼特。HDR 峰值亮度无法在全屏范围内长时间维持：接近上限、屏幕大面积是白色时，macOS 过一阵可能会因为发热或功耗降低余量，最亮的部分就停在剩下的余量上。
 - **增亮是怎么测的**：在暗的房间里用 Mac 自带的摄像头，一边按真实按键一边测：`scripts/light-check.sh`（见 [AGENTS.md](AGENTS.md)）。摄像头看到的是屏幕照在房间里的光；各档位的比例用一个不依赖摄像头特性的「零差测试」来核对。测试机是 14 英寸 MacBook Pro、macOS 27.2.1；那 9% 的补偿在其他机型上可能不同。
-- **退出增亮后约 13 秒略暗（`overlay` 和 `classic`）**：增亮结束后 macOS 还会自己保持 HDR 模式约 15 秒，这段时间普通白色比标准暗约 7%，之后 macOS 降下背光，白色在约 2 秒内回到标准。不让 HDR 模式一直开着的话，Overbright 没法修正这一点。`direct` 没有这个问题：它从不打开 HDR 模式，增亮结束后 0.1 秒内背光就回到标准白（`brightness-log.sh` 的读数，还没用摄像头测过）。
+- **摄像头测光不保存画面**。这是给开发者用的脚本，App 本身从不打开摄像头。
+  - 每帧只记一个亮度数字，从不存图片；报告写完后连这些数字也会删掉（加 `--keep-raw` 才保留）。
+  - 测完、出错、被中断时摄像头都会立即关掉。
+  - 撤销权限：系统设置 → 隐私与安全性 → 摄像头 → 关掉 **Overbright Light Meter**。
+  - 详情和怎么删除旧的测量文件，见 [SECURITY.md](SECURITY.md)。
+- **退出增亮后约 13 秒略暗（`overlay` 和 `classic`）**：增亮结束后 macOS 还会自己保持 HDR 模式约 15 秒，这段时间普通白色比标准暗约 7%，之后 macOS 降下背光，白色在约 2 秒内回到标准。不让 HDR 模式一直开着的话，Overbright 没法修正这一点。`direct` 没有这个问题：它从不打开 HDR 模式，增亮结束后 0.1 秒内背光就回到标准白（`brightness-log.sh` 的读数）。摄像头实测也没有看到变暗的那段时间。
 - **越亮越热**。更高的亮度更耗电、发热更多。macOS 可能会自己把屏幕调暗，Overbright 不会去对抗它。
 - **不要同时运行两个同类工具**。BetterDisplay、BrightIntosh、Lunar、f.lux 等也会改 Gamma 表。Overbright 检测到 Gamma 表已经被增亮时会拒绝开启。
 - **不适合对色彩要求严格的工作**。用 `overlay` 和 `classic` 时，增亮可能会让 HDR 照片和视频的高光细节被压掉；`direct` 会不会这样还没测过。做这类工作前请先恢复标准亮度。

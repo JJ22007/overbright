@@ -1,7 +1,10 @@
 // Records how bright the built-in camera's picture is, frame by frame, as
 // numbers only (no image is ever kept). The screen lights the user's face and
 // the room, so the picture brightens and darkens with the display.
-//   BrightnessCamera --out file.tsv --seconds N [--lock-after S]
+//   BrightnessCamera --out file.tsv --seconds N [--lock-after S] [--parent PID]
+// With --parent it stops as soon as that process is gone (a check that was
+// interrupted or crashed), so the camera is never left on. It also stops on
+// SIGINT and SIGTERM, and when the file <out>.stop appears.
 // Writes: t (Unix time), meanLuma (0-255, whole frame), centreLuma,
 // clipped (fraction of pixels at 250+), locked (1 once exposure is locked).
 import AVFoundation
@@ -9,12 +12,14 @@ import AppKit
 
 setvbuf(stdout, nil, _IOLBF, 0)
 var out = "camera.tsv", seconds = 30.0, lockAfter = 2.5
+var parent: pid_t = 0
 var args = CommandLine.arguments.dropFirst().makeIterator()
 while let a = args.next() {
     switch a {
     case "--out": out = args.next() ?? out
     case "--seconds": seconds = Double(args.next() ?? "") ?? seconds
     case "--lock-after": lockAfter = Double(args.next() ?? "") ?? lockAfter
+    case "--parent": parent = pid_t(args.next() ?? "") ?? 0
     default: break
     }
 }
@@ -90,10 +95,25 @@ DispatchQueue.main.asyncAfter(deadline: .now() + lockAfter) {
         log("exposure mode now \(device.exposureMode.rawValue) at \(Date().timeIntervalSince1970)")
     } catch { log("lock failed: \(error)") }
 }
-DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+func stop(_ why: String) {
     session.stopRunning()
-    log("stopped")
+    log("stopped: \(why)")
     exit(0)
+}
+DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { stop("time") }
+var signalSources: [DispatchSourceSignal] = []
+for sig in [SIGINT, SIGTERM, SIGHUP] {
+    signal(sig, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    source.setEventHandler { stop("signal \(sig)") }
+    source.resume()
+    signalSources.append(source)
+}
+// The check asks it to stop by creating "<out>.stop".
+let stopFile = out + ".stop"
+Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+    if FileManager.default.fileExists(atPath: stopFile) { stop("asked to") }
+    if parent > 0 && kill(parent, 0) != 0 && errno == ESRCH { stop("the check that started it is gone") }
 }
 let app = NSApplication.shared
 app.setActivationPolicy(.prohibited)

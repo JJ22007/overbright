@@ -22,14 +22,16 @@ setvbuf(stdout, nil, _IOLBF, 0)
 var outputDirectory = "outputs/light-check"
 var cli = (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/overbright")
 var force = false
+var keepRaw = false
 var arguments = CommandLine.arguments.dropFirst().makeIterator()
 while let argument = arguments.next() {
     switch argument {
     case "--out": outputDirectory = arguments.next() ?? outputDirectory
     case "--cli": cli = arguments.next() ?? cli
     case "--force": force = true
+    case "--keep-raw": keepRaw = true
     default:
-        FileHandle.standardError.write(Data("usage: light-check [--out dir] [--cli path] [--force]\n".utf8))
+        FileHandle.standardError.write(Data("usage: light-check [--out dir] [--cli path] [--force] [--keep-raw]\n".utf8))
         exit(2)
     }
 }
@@ -39,6 +41,8 @@ let cameraFile = (outputDirectory as NSString).appendingPathComponent("camera.ts
 let absoluteCameraFile = cameraFile.hasPrefix("/") ? cameraFile : root + "/" + cameraFile
 
 func fail(_ message: String) -> Never {
+    stopCamera(absoluteCameraFile)
+    removeCameraFile(absoluteCameraFile, keep: keepRaw)
     FileHandle.standardError.write(Data("light-check: \(message)\n".utf8))
     exit(1)
 }
@@ -120,15 +124,22 @@ window.orderFrontRegardless()
 
 let camera = Process()
 camera.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-camera.arguments = ["-n", "-W", root + "/.build/BrightnessCamera.app", "--args", "--out", absoluteCameraFile, "--seconds", "150"]
+camera.arguments = cameraArguments(app: root + "/.build/BrightnessCamera.app", file: absoluteCameraFile)
 try? FileManager.default.removeItem(atPath: absoluteCameraFile)
 do { try camera.run() } catch { restore(); fail("could not start the camera meter: \(error)") }
+onInterrupt {
+    restore()
+    stopCamera(absoluteCameraFile)
+    removeCameraFile(absoluteCameraFile, keep: keepRaw)
+    FileHandle.standardError.write(Data("light-check: interrupted; display restored, camera stopped\n".utf8))
+    exit(130)
+}
 pump(4)
 
 let room = checkRoom(cameraFile: absoluteCameraFile, setPatch: setPatch, pump: pump, now: now)
 print("room: \(room.summary)")
 if !room.isDark && !force {
-    restore(); camera.terminate()
+    restore()
     fail("\(RoomCheck.advice)\n(\(room.summary))")
 }
 
@@ -176,8 +187,7 @@ overbright(["set", "100"])
 setPatch(1)
 pump(1)
 restore()
-camera.terminate()
-pump(1)
+stopCamera(absoluteCameraFile)
 
 // MARK: Analysis
 
@@ -284,6 +294,7 @@ Light relative to the steady 100% at the end, while macOS brings the backlight d
 """
 + (failures.isEmpty ? "" : "\n## Failures\n\n" + failures.map { "- \($0)" }.joined(separator: "\n") + "\n")
 try? report.write(toFile: (outputDirectory as NSString).appendingPathComponent("report.md"), atomically: true, encoding: .utf8)
+removeCameraFile(absoluteCameraFile, keep: keepRaw)
 let marksText = marks.map { String(format: "%.3f\t%@\t%@", $0.time, $0.label, $0.scale) }.joined(separator: "\n") + "\n"
 try? marksText.write(toFile: (outputDirectory as NSString).appendingPathComponent("marks.tsv"), atomically: true, encoding: .utf8)
 print(report)
