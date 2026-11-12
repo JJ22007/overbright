@@ -23,14 +23,16 @@ setvbuf(stdout, nil, _IOLBF, 0)
 var outputDirectory = "outputs/gamma-check"
 var cli = (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/overbright")
 var force = false
+var keepRaw = false
 var arguments = CommandLine.arguments.dropFirst().makeIterator()
 while let argument = arguments.next() {
     switch argument {
     case "--out": outputDirectory = arguments.next() ?? outputDirectory
     case "--cli": cli = arguments.next() ?? cli
     case "--force": force = true
+    case "--keep-raw": keepRaw = true
     default:
-        FileHandle.standardError.write(Data("usage: gamma-check [--out dir] [--cli path] [--force]\n".utf8))
+        FileHandle.standardError.write(Data("usage: gamma-check [--out dir] [--cli path] [--force] [--keep-raw]\n".utf8))
         exit(2)
     }
 }
@@ -148,19 +150,19 @@ func restoreAll() {
     if configChanged { overbright(["off"]); setConfig(classic: false); pump(2) }
     window.orderOut(nil)
     restoreBoost(state: startState, scale: startScale, level: startLevel) { overbright($0) }
-    if camera.isRunning { camera.terminate() }
+    stopCamera(absoluteCameraFile)
 }
 func fail(_ message: String) -> Never {
     restoreAll()
+    removeCameraFile(absoluteCameraFile, keep: keepRaw)
     FileHandle.standardError.write(Data("gamma-check: \(message)\n".utf8))
     exit(1)
 }
-for sig in [SIGINT, SIGTERM, SIGHUP] {
-    signal(sig) { _ in
-        restoreTable()
-        if let original = originalConfig { try? original.write(to: configURL) }
-        exit(130)
-    }
+onInterrupt {
+    restoreAll()
+    removeCameraFile(absoluteCameraFile, keep: keepRaw)
+    FileHandle.standardError.write(Data("gamma-check: interrupted; display, gamma table and config restored, camera stopped\n".utf8))
+    exit(130)
 }
 
 // MARK: Run
@@ -175,7 +177,7 @@ while now() < settleDeadline {
 }
 window.orderFrontRegardless()
 camera.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-camera.arguments = ["-n", "-W", root + "/.build/BrightnessCamera.app", "--args", "--out", absoluteCameraFile, "--seconds", "150"]
+camera.arguments = cameraArguments(app: root + "/.build/BrightnessCamera.app", file: absoluteCameraFile)
 try? FileManager.default.removeItem(atPath: absoluteCameraFile)
 do { try camera.run() } catch { fail("could not start the camera meter: \(error)") }
 pump(4)
@@ -250,6 +252,7 @@ pump(1)
 
 let frames = cameraFrames(absoluteCameraFile)
 guard frames.count > 100 else {
+    removeCameraFile(absoluteCameraFile, keep: keepRaw)
     FileHandle.standardError.write(Data("gamma-check: the camera recorded no frames (camera permission for Overbright Light Meter?)\n".utf8)); exit(1)
 }
 struct Result { var ref: Double; var test: Double; var change: Double; var error: Double }
@@ -305,5 +308,6 @@ Each row alternates its reference and test four times, two seconds each (2.5 s f
 """
 let reportFile = (outputDirectory as NSString).appendingPathComponent("report.md")
 try? report.write(toFile: reportFile, atomically: true, encoding: .utf8)
+removeCameraFile(absoluteCameraFile, keep: keepRaw)
 print(report)
 print("report: \(reportFile)")

@@ -72,3 +72,44 @@ func restoreBoost(state: String, scale: Double, level: Double?, run: ([String]) 
     }
     if state != "on" { run(["off"]) }
 }
+
+/// Ctrl-C, SIGTERM and SIGHUP run `handler` on the main queue (the checks pump
+/// the main run loop, so it runs within a fraction of a second), which should
+/// restore the display, remove the camera file and exit.
+private var interruptSources: [DispatchSourceSignal] = []
+func onInterrupt(_ handler: @escaping () -> Void) {
+    for sig in [SIGINT, SIGTERM, SIGHUP] {
+        signal(sig, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+        source.setEventHandler(handler: handler)
+        source.resume()
+        interruptSources.append(source)
+    }
+}
+
+/// The camera meter's arguments: numbers to `file`, stopping when this
+/// process is gone, so an interrupted or crashed check never leaves it on.
+func cameraArguments(app: String, file: String, seconds: Int = 150) -> [String] {
+    ["-n", "-W", app, "--args", "--out", file, "--seconds", String(seconds), "--parent", String(getpid())]
+}
+
+/// The camera file holds one brightness number per frame (no image), but it
+/// still records when someone was in front of the Mac. It is deleted once the
+/// report is written unless the check was run with --keep-raw.
+func removeCameraFile(_ path: String, keep: Bool) {
+    guard !keep else { return }
+    try? FileManager.default.removeItem(atPath: path)
+}
+
+/// Stops the camera meter now (it watches for "<file>.stop") and waits until
+/// it has, so the camera is off before the check analyses or exits.
+func stopCamera(_ file: String) {
+    let stop = file + ".stop"
+    FileManager.default.createFile(atPath: stop, contents: nil)
+    let deadline = Date().addingTimeInterval(3)
+    while Date() < deadline {
+        if let text = try? String(contentsOfFile: file, encoding: .utf8), text.contains("# stopped") { break }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+    try? FileManager.default.removeItem(atPath: stop)
+}

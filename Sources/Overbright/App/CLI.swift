@@ -109,7 +109,11 @@ enum CLI {
 
     private static func send(_ arguments: [String]) -> Int32 {
         let reply = NSTemporaryDirectory() + "overbright-\(UUID().uuidString).reply"
-        let request: [String: Any] = ["args": arguments, "reply": reply]
+        guard let token = CommandToken.read() else {
+            fail("error: Overbright is not running. Open Overbright.app first.")
+            return 2
+        }
+        let request: [String: Any] = ["args": arguments, "reply": reply, "token": token]
         guard let data = try? JSONSerialization.data(withJSONObject: request),
               let json = String(data: data, encoding: .utf8) else { return 2 }
         DistributedNotificationCenter.default().postNotificationName(
@@ -154,6 +158,7 @@ final class CommandServer {
     private let brightnessKeyService: BrightnessKeyService
     private let externalDisplays: ExternalDisplayManager
     private var observer: NSObjectProtocol?
+    private var token: String?
     /// The app's F1/F2 handler, for `overbright key`.
     var keyHandler: ((BrightnessKeyDirection, Bool) -> Double?)?
 
@@ -168,6 +173,11 @@ final class CommandServer {
     }
 
     func start() {
+        token = CommandToken.create()
+        guard token != nil else {
+            NSLog("Overbright: could not write the command token; the overbright command is off")
+            return
+        }
         observer = DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name(AppInfo.commandChannel),
             object: nil,
@@ -185,6 +195,7 @@ final class CommandServer {
               let request = object as? [String: Any],
               let arguments = request["args"] as? [String],
               let reply = request["reply"] as? String,
+              let token, CommandToken.matches(request["token"] as? String, token),
               // Only ever write where the client asked from: a reply file in the
               // user's own temporary directory.
               reply.hasPrefix(NSTemporaryDirectory()),

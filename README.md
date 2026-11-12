@@ -61,6 +61,8 @@ Get `Overbright-universal.zip` from the [latest release](https://github.com/JJ22
 
 The download is ad-hoc signed, not notarized by Apple. The first time you open it macOS will block it: go to System Settings → Privacy & Security and choose **Open Anyway**. You do not need to turn Gatekeeper off.
 
+Each release also has `SHA256SUMS.txt`. Run `shasum -a 256 -c SHA256SUMS.txt` in the folder that holds both files; it should print `Overbright-universal.zip: OK`. This shows the zip is the one the release built. It is not a signature: see [SECURITY.md](SECURITY.md).
+
 ### Build from source
 
 Needs the Swift compiler. If you have never installed it, run `xcode-select --install` first.
@@ -278,7 +280,12 @@ Before changing anything, Overbright records the display's original state, and i
 
 - **The percentage is not a measurement.** 160% is a requested boost, not 1,600 nits. Peak HDR brightness is not sustainable across the full screen: near the ceiling a mostly white screen can make macOS lower the headroom after a while (heat, power), and the brightest parts then stop at what is left.
 - **How the boost was measured.** With the Mac's own camera, in a dark room, while pressing real keys: `scripts/light-check.sh` (see [AGENTS.md](AGENTS.md)). The camera sees the screen's light on the room; the levels are checked with a null test that does not depend on the camera. Measured on a 14" MacBook Pro with macOS 27.2.1; the 9% correction may differ on other models.
-- **Slightly dim for ~13 s after the boost (`overlay` and `classic`).** macOS keeps HDR mode on for about 15 s after the boost ends, and meanwhile draws ordinary white about 7% below standard. Then it lowers the backlight and white returns to standard over about 2 seconds. Overbright cannot correct this without keeping HDR mode on. `direct` does not have this: it never turns HDR mode on, and when the boost ends the backlight is back at standard white within 0.1 s (readings from `brightness-log.sh`; not yet checked with the camera).
+- **The camera checks keep no pictures.** They are developer scripts; the app itself never opens the camera.
+  - They save one brightness number per frame, never an image, and delete even that once the report is written (`--keep-raw` keeps it).
+  - The camera stops when the check ends, fails or is interrupted.
+  - To turn the permission off: System Settings → Privacy & Security → Camera → **Overbright Light Meter**.
+  - Details, and how to delete old measurement files: [SECURITY.md](SECURITY.md).
+- **Slightly dim for ~13 s after the boost (`overlay` and `classic`).** macOS keeps HDR mode on for about 15 s after the boost ends, and meanwhile draws ordinary white about 7% below standard. Then it lowers the backlight and white returns to standard over about 2 seconds. Overbright cannot correct this without keeping HDR mode on. `direct` does not have this: it never turns HDR mode on, and when the boost ends the backlight is back at standard white within 0.1 s (readings from `brightness-log.sh`). The camera saw no dim period either.
 - **Brighter means warmer.** Higher brightness uses more power and makes more heat. macOS may dim the display on its own; Overbright does not override that.
 - **Don't run two of these at once.** BetterDisplay, BrightIntosh, Lunar, f.lux and similar tools also change the gamma table. Overbright refuses to turn on when it detects an already boosted table.
 - **Not for color-critical work.** With `overlay` and `classic` the boost can clip highlight detail in HDR photos and video. Whether `direct` does has not been tested. Restore standard brightness first.
