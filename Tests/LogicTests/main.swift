@@ -216,13 +216,17 @@ let partial = parsed(#"{"maxLevel": 130, "showPercentage": true}"#)
 expect(partial.maxLevel == 130 && partial.showPercentage && partial.keyStep == 6.25 && partial.warnings.isEmpty,
        "unlisted options keep their defaults")
 
-let clamped = parsed(#"{"maxLevel": 400, "keyStep": 0}"#)
-expect(clamped.maxLevel == 160 && clamped.keyStep == 0.5 && clamped.warnings.count == 2,
+let clamped = parsed(#"{"maxLevel": 500, "keyStep": 0}"#)
+expect(clamped.maxLevel == 400 && clamped.keyStep == 0.5 && clamped.warnings.count == 2,
        "out-of-range numbers are clamped with a warning each")
-expect(parsed(#"{"maxLevel": 100}"#).maxLevel == 160, "a ceiling of 100 would disable the app and is refused")
+expect(parsed(#"{"maxLevel": 100}"#).maxLevel == nil, "a ceiling of 100 would disable the app and is refused")
+expect(Config().maxLevel == nil, "the default ceiling is the panel's own")
+let autoLevel = parsed(#"{"maxLevel": "auto"}"#)
+expect(autoLevel.maxLevel == nil && autoLevel.warnings.isEmpty, "\"auto\" is the panel's own ceiling")
+expect(parsed(#"{"maxLevel": 230}"#).maxLevel == 230, "a ceiling above 160 is accepted")
 
 let wrongTypes = parsed(#"{"maxLevel": "high", "brightnessKeys": 1, "language": "fr", "presets": 3, "typo": true}"#)
-expect(wrongTypes.maxLevel == 160 && wrongTypes.brightnessKeys && wrongTypes.language == "auto" &&
+expect(wrongTypes.maxLevel == nil && wrongTypes.brightnessKeys && wrongTypes.language == "auto" &&
        wrongTypes.presets.isEmpty && wrongTypes.warnings.count == 5,
        "wrong types and unknown keys warn and fall back")
 expect(parsed(#"{"maxLevel": true}"#).warnings.count == 1, "a boolean is not accepted as a number")
@@ -246,16 +250,29 @@ expect(parsed(#"{"language": "ZH"}"#).language == "zh", "language is case-insens
 
 // MARK: User ceiling and custom key steps
 
-BoostLevel.cap = 1.3
+BoostLevel.userCap = 1.3
 expect(abs(BoostLevel(1.6).factor - 1.3) < 0.0001, "levels stop at the user's maxLevel")
 expect(
     abs(BoostCalibration.gammaFactor(level: BoostLevel(1.3), currentEDR: 4) -
         (1 + 0.553125 * 0.5)) < 0.0001,
     "a lower ceiling does not rescale the calibration curve"
 )
-BoostLevel.cap = 9
-expect(BoostLevel.cap == BoostLevel.maximum, "the ceiling can never exceed the calibrated maximum")
-BoostLevel.cap = BoostLevel.maximum
+BoostLevel.userCap = 9
+expect(BoostLevel.cap == BoostLevel.maximum, "the ceiling can never exceed the panel's maximum")
+BoostLevel.maximum = 2.44
+expect(abs(BoostLevel(2.2).factor - 2.2) < 0.0001, "a measured panel ceiling allows levels above 160%")
+expect(abs(BoostLevel(3).factor - 2.44) < 0.0001, "levels stop at the measured panel ceiling")
+expect(abs(BuiltInBrightnessScale.top - 244) < 0.001, "the scale's top follows the panel")
+BoostLevel.maximum = 99
+expect(BoostLevel.maximum == BoostLevel.absoluteMaximum, "no panel goes above the hard limit")
+BoostLevel.maximum = BoostLevel.classicMaximum
+
+// MARK: Panel ceiling
+
+expect(PanelCeiling.level(headroom: 2.67) == 2.44, "2.67x headroom less the 9% white correction is 244%")
+expect(PanelCeiling.level(headroom: 1.0) == nil, "no headroom, no ceiling")
+expect(PanelCeiling.level(headroom: .nan) == nil, "a broken reading is ignored")
+expect(PanelCeiling.level(headroom: 16) == BoostLevel.absoluteMaximum, "a huge headroom stops at the hard limit")
 
 BrightnessKeyStep.coarse = 0.07
 expect(

@@ -84,7 +84,7 @@ final class GammaTableService {
     func apply(exactFactor proposed: Float) -> Bool {
         guard var table = baseline, let displayID else { return false }
         let factor = proposed.isFinite
-            ? min(max(proposed, Self.minimumExactFactor), BoostLevel.maximum)
+            ? min(max(proposed, Self.minimumExactFactor), BoostLevel.classicMaximum)
             : 1
         for index in table.red.indices {
             table.red[index] *= factor

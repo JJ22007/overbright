@@ -71,7 +71,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
         presetItems = config.presets.map { preset in
             let item = NSMenuItem(
-                title: "\(preset.name)  \(Self.plain(min(preset.level, config.maxLevel)))%",
+                title: "\(preset.name)  \(Self.plain(min(preset.level, Double(BoostLevel.cap) * 100)))%",
                 action: #selector(applyPreset(_:)),
                 keyEquivalent: ""
             )
