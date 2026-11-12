@@ -9,7 +9,7 @@
   <a href="README.md">English</a>
 </p>
 
-Liquid Retina XDR 屏幕平时只在播放 HDR 视频时才会用到额外的亮度。Overbright 把这部分亮度放出来给所有内容用：最高到面板能全屏持续保持的亮度（M3 及之后是标准亮度的 166%，M1、M2 是 200%，每台 Mac 按自己面板报告的数字算），可以在菜单栏里调，可以用 F1/F2 调，也可以用一条命令调。全部代码约 4000 行 Swift，没有第三方依赖，也不需要 Xcode 工程。设置都在一份 JSON 里；JSON 改不了的，自己或者让 AI 编程助手改几行代码就行。
+Liquid Retina XDR 屏幕平时只在播放 HDR 视频时才会用到额外的亮度。Overbright 把这部分亮度放出来给所有内容用：最高到面板能全屏持续保持的亮度（M3 及之后是标准亮度的 166%，M1、M2 是 200%，每台 Mac 按自己面板报告的数字算），可以在菜单栏里调，可以用 F1/F2 调，也可以用一条命令调。全部是 Swift 代码，没有第三方依赖，也不需要 Xcode 工程。设置都在一份 JSON 里；JSON 改不了的，自己或者让 AI 编程助手改几行代码就行。
 
 ## 功能
 
@@ -106,8 +106,8 @@ DDC/CI 需要 Apple 芯片的 Mac，Intel Mac 上所有副屏都走软件调暗�
 | 你按 | 会发生什么 |
 |---|---|
 | 100% 以下按 F1/F2 | 背光走一档，和 macOS 自带按键一样。 |
-| 100% 时按 F2 | 开始增亮。屏幕闲置后的第一下大约要 0.3 秒，因为 macOS 要先把背光拉到峰值；之后每一下都是即时的。 |
-| 106% 时按 F1 | 立刻回到 100%。macOS 之后会让背光在峰值再停约 15 秒，这期间 Overbright 一直把画面保持在标准亮度，直到背光降下来。 |
+| 100% 时按 F2 | 开始增亮。用 `overlay` 和 `classic` 时，屏幕闲置后的第一下大约要 0.3 秒，因为 macOS 要先把背光拉到峰值；之后每一下都是即时的。`direct` 没有这段爬升。 |
+| 106% 时按 F1 | 立刻回到 100%。用 `overlay` 和 `classic` 时，macOS 之后会让背光在峰值再停约 15 秒，这期间 Overbright 一直把画面保持在标准亮度，直到背光降下来。 |
 | Option+F1/F2 | 照常打开「显示器」设置。 |
 
 ## 改成你自己的
@@ -182,27 +182,28 @@ overbright status --json
 
 ```json
 {
+  "boostMethod" : "direct",
   "brightnessKeys" : "on",
   "configProblems" : [],
+  "direct" : { "ceilingNits" : 1000, "rewrites" : 0, "standardNits" : 600, "targetNits" : 900 },
+  "edrHeadroom" : 1,
   "externalDisplays" : [
     { "control" : "ddc", "id" : 2, "level" : 100, "minimum" : -90, "name" : "DELL P2723DE" }
   ],
-  "edrHeadroom" : 1.26,
-  "level" : 125,
+  "level" : 150,
   "maxLevel" : "auto",
-  "panelMaxLevel" : 244,
-  "potentialEdrHeadroom" : 16,
+  "panel" : { "model" : "Mac18,1", "peakNits" : 1600, "standardNits" : 600, "directPossible" : true },
+  "panelMaxLevel" : 166,
   "presets" : [],
-  "scale" : 125,
-  "scaleTop" : 244,
-  "boostMethod" : "direct",
+  "scale" : 150,
+  "scaleTop" : 166,
   "state" : "on",
   "supported" : true,
-  "version" : "2.0"
+  "version" : "2.6"
 }
 ```
 
-App 必须在运行；命令会和它通信，等屏幕真的变了才返回。`state` 是 `off`、`engaging`、`on` 或 `unavailable`。任何命令加上 `--json` 都会返回这个状态对象。
+这里只摘了一部分字段，完整输出还有几个诊断字段。App 必须在运行；命令会和它通信，等屏幕真的变了才返回。`state` 是 `off`、`engaging`、`on` 或 `unavailable`。任何命令加上 `--json` 都会返回这个状态对象。
 
 | 退出码 | 含义 |
 |---|---|
@@ -238,29 +239,31 @@ App 必须在运行；命令会和它通信，等屏幕真的变了才返回。`
 | [`Support/L10n.swift`](Sources/Overbright/Support/L10n.swift) | 中英文文案 | 加一种语言 |
 | [`App/AppDelegate.swift`](Sources/Overbright/App/AppDelegate.swift) | 启动、睡眠唤醒、应用配置 | 响应某个系统事件 |
 | [`Controllers/BoostController.swift`](Sources/Overbright/Controllers/BoostController.swift) | 负责开启和恢复增亮的状态机 | 很少，而且要小心 |
-| [`Services/`](Sources/Overbright/Services) | Gamma 表、EDR 图层、背光、按键监听 | 很少 |
+| [`Services/`](Sources/Overbright/Services) | 直接写面板、Gamma 表、HDR 图层、背光、按键监听 | 很少 |
 
 ## 工作原理
 
-macOS 只有在屏幕上有 HDR 内容时，才会给 XDR 屏幕开放高于标准白的亮度「余量」。Overbright 在内置屏幕上放一个很小的、看不见的 HDR 图层来打开这部分余量。这时 macOS 会把背光拉到峰值（MacBook Pro 上是 1600 尼特），并且正常情况下会把普通内容按比例压回去，让它看起来不变。Overbright 让普通白色分到其中一部分光。具体做法取决于系统版本（`boostMethod`）：
+Overbright 怎么把内置屏幕调亮，取决于系统版本（`boostMethod`）。
 
-- **direct**（macOS 27.2 及以后的默认方式）：不用图层、不写 Gamma 表、不开 HDR，Overbright 直接把面板背光推过标准白。150% 就是标准白（600 尼特，环境亮时更高）的 1.5 倍，最高到 `maxNits`（1000）。macOS 自己调背光（比如随环境光）时会覆盖这个值，Overbright 在 0.25 秒内补回；你自己调低亮度时，增亮结束。增亮结束或程序崩溃后，原来的值会写回。屏幕上不画任何东西，所以切桌面和调度中心一切照常。14 英寸 MacBook Pro 实测：100% 时背光功率 6.8 W，166%（996 尼特）时 10.7 W，一分钟内保持稳定。
+- **direct**（macOS 27.2 及以后的默认方式）：Overbright 直接把面板背光推过标准白，做法是改写内置屏幕帧缓冲的两个值：亮度上限（`BLNitsCap`）和当前亮度（`IOMFBBrightnessLevel`）。不用图层、不写 Gamma 表、不开 HDR 模式，屏幕上不画任何东西，所以切桌面和调度中心都不受影响。150% 就是标准白（600 尼特，环境亮时更高）的 1.5 倍，最高到 `maxNits`（1000）。每次写入都会读回核对；macOS 没接受的话，Overbright 退回 `overlay`。macOS 自己调背光（随环境光、自动亮度）时会覆盖这两个值，Overbright 等它调完、数值稳定约 1 秒后再把增亮写回去；你自己调低亮度时，增亮结束。增亮结束时，或者崩溃后的下一次启动时，原来的值会写回。14 英寸 MacBook Pro 实测：100% 时背光功率 6.8 W，166%（996 尼特）时 10.7 W，一分钟内保持稳定。
 
-- **overlay**（macOS 27.2 及以后）：Gamma 表已经改变不了面板实际发出的光，所以 Overbright 在内置屏幕上盖一层全屏 HDR 图层，把它下面的所有内容乘以增亮倍数：160% 就是乘 1.6。黑色仍然是黑色。这一层不会出现在截图和录屏里，也不会挡住点击。在 HDR 模式下，背光到达峰值后 macOS 会把普通白色画暗约 9%，图层会在背光到位时把这部分补回来，所以百分比是相对真正的标准白。不写任何 Gamma 表。
-- **classic**（更早的 macOS）：macOS 在 Gamma 表之后才做压缩，所以表的值大于 1 就能把白色抬进余量里：160% 约等于表端点 1.6，上限是 macOS 报告的余量。
+另外两种方式走的是 HDR 余量。macOS 只有在屏幕上有 HDR 内容时，才会给 XDR 屏幕开放高于标准白的亮度：这时它把背光拉到峰值（MacBook Pro 上是 1600 尼特），再把普通内容按比例压回去，让它看起来不变。这两种方式让普通白色留下其中一部分光。
+
+- **overlay**（macOS 27.2 及以后的备用方式）：Gamma 表已经改变不了面板实际发出的光，所以 Overbright 在内置屏幕上盖一层全屏 HDR 图层，把它下面的所有内容乘以增亮倍数：160% 就是乘 1.6。黑色仍然是黑色。这一层不会出现在截图和录屏里，也不会挡住点击。在 HDR 模式下，背光到达峰值后 macOS 会把普通白色画暗约 9%，图层会在背光到位时把这部分补回来，所以百分比是相对真正的标准白。不写任何 Gamma 表。切桌面和打开调度中心的过渡动画里，macOS 画这一层时会丢掉相乘效果，看起来就是一闪白屏；Overbright 在过渡期间把图层藏起来，能减少但去不掉。这就是默认改用 `direct` 的原因。
+- **classic**（更早的 macOS）：用一个很小的、看不见的 HDR 图层打开余量。macOS 在 Gamma 表之后才做压缩，所以表的值大于 1 就能把白色抬进余量里：160% 约等于表端点 1.6，上限是 macOS 报告的余量。
 
 百分比是在标准白（背光最亮时 500 或 600 尼特，视型号而定）基础上的请求：600 尼特的 160% 约等于 960 尼特。direct 方式的上限是 `maxNits` ÷ 标准白：1000 ÷ 600 = 166%，M1、M2 上是 1000 ÷ 500 = 200%。overlay 方式的上限是测出来的：背光到峰值时 macOS 会报告普通白色还能亮多少（EDR 余量，峰值 ÷ 标准白，14 英寸 MacBook Pro 上是 1596 ÷ 600 = 2.67），Overbright 再扣掉为 macOS 压暗白色补回的 9%：2.67 ÷ 1.09 = 244%。其他型号按自己的余量得到自己的数字；这 9% 只在 14 英寸 MacBook Pro 上测过。
 
-改动任何东西之前，Overbright 会先记下屏幕原来的状态，并写下一个恢复标记。即使 App 崩溃或被强制退出，下次启动也会先把亮度恢复到标准状态。读取和设置系统背光用的是 macOS 的 DisplayServices 框架，这是一个私有接口，未来的系统版本可能会改动它。
+改动任何东西之前，Overbright 会先记下屏幕原来的状态，并写下一个恢复标记。即使 App 崩溃或被强制退出，下次启动也会先把亮度恢复到标准状态。**私有接口**：direct 方式写的是苹果没有公开的帧缓冲属性；读取和设置系统背光用的 DisplayServices 框架也是私有接口。系统更新可能让其中任何一个失效；macOS 26.3 就封过其他亮度工具用的一条类似路线。direct 写入没被接受时，Overbright 会退回 `overlay`，`status --json` 里的 `boostMethod` 会显示当前用的方式。
 
 ## 限制与注意事项
 
 - **百分比不是实测亮度**。160% 是请求的增亮幅度，不等于 1600 尼特。HDR 峰值亮度无法在全屏范围内长时间维持：接近上限、屏幕大面积是白色时，macOS 过一阵可能会因为发热或功耗降低余量，最亮的部分就停在剩下的余量上。
 - **增亮是怎么测的**：在暗的房间里用 Mac 自带的摄像头，一边按真实按键一边测：`scripts/light-check.sh`（见 [AGENTS.md](AGENTS.md)）。摄像头看到的是屏幕照在房间里的光；各档位的比例用一个不依赖摄像头特性的「零差测试」来核对。测试机是 14 英寸 MacBook Pro、macOS 27.2.1；那 9% 的补偿在其他机型上可能不同。
-- **退出增亮后约 13 秒略暗**：增亮结束后 macOS 还会自己保持 HDR 模式约 15 秒，这段时间普通白色比标准暗约 7%，之后 macOS 降下背光，白色在约 2 秒内回到标准。不让 HDR 模式一直开着的话，Overbright 没法修正这一点。
+- **退出增亮后约 13 秒略暗（`overlay` 和 `classic`）**：增亮结束后 macOS 还会自己保持 HDR 模式约 15 秒，这段时间普通白色比标准暗约 7%，之后 macOS 降下背光，白色在约 2 秒内回到标准。不让 HDR 模式一直开着的话，Overbright 没法修正这一点。`direct` 没有这个问题：它从不打开 HDR 模式，增亮结束后 0.1 秒内背光就回到标准白（`brightness-log.sh` 的读数，还没用摄像头测过）。
 - **越亮越热**。更高的亮度更耗电、发热更多。macOS 可能会自己把屏幕调暗，Overbright 不会去对抗它。
 - **不要同时运行两个同类工具**。BetterDisplay、BrightIntosh、Lunar、f.lux 等也会改 Gamma 表。Overbright 检测到 Gamma 表已经被增亮时会拒绝开启。
-- **不适合对色彩要求严格的工作**。增亮可能会让 HDR 照片和视频的高光细节被压掉，做这类工作前请先恢复标准亮度。
+- **不适合对色彩要求严格的工作**。用 `overlay` 和 `classic` 时，增亮可能会让 HDR 照片和视频的高光细节被压掉；`direct` 会不会这样还没测过。做这类工作前请先恢复标准亮度。
 - **副屏只能在它自己的范围内调**：超过 100% 需要 EDR 余量，只有内置 XDR 屏有。副屏最高就是它自己的最大亮度。
 - **DDC/CI 要显示器配合**：大多数显示器会响应，有的响应慢，少数接在扩展坞或转接头后面的完全不响应，会退回软件调暗。Overbright 除了亮度不会写任何其他设置。
 - **只在有限的机型上测过**。哪些实测过、哪些只是应该能用，见[支持的机型](#支持的机型)。CI 会跑不依赖硬件的测试并构建两种架构，但测不了真实面板。
@@ -271,7 +274,7 @@ macOS 只有在屏幕上有 HDR 内容时，才会给 XDR 屏幕开放高于标�
 
 ## 致谢
 
-结合 EDR 余量和 Gamma 表来增亮，是 [BrightIntosh](https://github.com/niklasr22/BrightIntosh)、[BetterDisplay](https://github.com/waydabber/BetterDisplay) 等工具已经在用的做法。如果你想要一个功能更多、更成熟的工具，请用它们。Overbright 的目标不一样：小到你可以把它完全改成自己的。
+打开 EDR 余量、再用 Gamma 表或相乘图层把普通内容抬进去，是 [BrightIntosh](https://github.com/niklasr22/BrightIntosh)、[BetterDisplay](https://github.com/waydabber/BetterDisplay) 已经在用的做法，Overbright 的 `classic` 和 `overlay` 沿用了它。`direct` 在 macOS 27.2 及以后换了一条路：直接驱动背光，屏幕上什么都不画。BetterDisplay Pro 也有一个针对内置 XDR 屏的实验性直接模式。
 
 菜单栏图标来自 [Lucide](https://lucide.dev)(ISC 许可,见 [LICENSES/lucide.txt](LICENSES/lucide.txt))。
 

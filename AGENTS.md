@@ -4,11 +4,19 @@ Instructions for AI coding agents working in this repository. Humans are welcome
 
 ## What this is
 
-Overbright is a macOS menu bar app that raises a built-in XDR display above 100% brightness by opening EDR headroom and lifting ordinary content into it (a multiplying HDR layer on macOS 27.2+, the gamma table before). It is intentionally small so that a person can fork it and have an agent reshape it into their own tool. Favor small, readable changes over abstractions.
+Overbright is a macOS menu bar app that raises a built-in XDR display above 100% brightness. On macOS 27.2+ it does so by default by writing the panel's backlight cap and level directly (`direct`: nothing is drawn on screen). The fallbacks open EDR headroom and lift ordinary content into it: a multiplying HDR layer on 27.2+ (`overlay`), the gamma table before (`classic`). It is intentionally small so that a person can fork it and have an agent reshape it into their own tool. Favor small, readable changes over abstractions.
 
 - Language: Swift, built with Swift Package Manager. No Xcode project, no third-party dependencies. Keep it that way.
 - Minimum macOS: 13. Both arm64 and x86_64 must keep building.
 - English for code, comments, commit messages and docs. `README.zh-CN.md` is a translation of the README; update it when the README changes in substance. Interface text is written in English and Chinese side by side with `L10n.tr("English", "中文")`.
+
+## Scope
+
+The aim is the cleanest, most verifiable XDR boost on macOS 27.2+, which means the direct method. Check new work against this before starting:
+
+- **Worth doing:** the direct method on more Macs and in more situations (sleep and wake, lid, automatic brightness, HDR video, low battery); making measurements easy for others to reproduce; keeping the CLI stable; fixing bugs anywhere.
+- **Not doing:** more external display features than brightness and dimming; raising `maxNits` above 1300 or working around the panel's thermal limit; new features for macOS before 27.2 (`classic` stays as it is); an App Store version; a settings window; colour, HDR grading or night-shift features.
+- **Claims follow measurements.** README says only what was measured, and on which Mac. Mark anything inferred as untested.
 
 ## Build, test, run
 
@@ -49,11 +57,11 @@ Use these instead of asking the user whether something looked brighter. Never wr
   - The camera's exposure cannot be locked on a MacBook. Only trust comparisons made within a few seconds of each other; that is why the ratio test is a null test.
 - **Real key presses.** `overbright key up|down --real [--control]` makes the running app post a brightness media key at the HID tap. It travels through macOS, Overbright's key tap and its handler, exactly like F1/F2. A shell cannot post one itself (it has no Accessibility). Without `--real`, `overbright key` calls the handler directly.
 - **`scripts/brightness-log.sh`: raw readings.** Read-only, safe at any time: backlight slider, standard nits, the backlight in nits macOS is driving (`IOMFBBrightnessLevel`, live through every ramp), EDR headroom and the gamma endpoint. None of these is emitted light.
-- **Facts measured on macOS 27.2.1 (14" MacBook Pro).**
+- **Facts measured on macOS 27.2.1 (14" MacBook Pro).** Most of these are about the `overlay` method, kept because it is the fallback.
   - The gamma table has no effect on emitted light, with or without EDR. A table installed when EDR starts stops macOS from scaling ordinary content, so white goes to the full backlight.
   - A full-screen EDR layer with `compositingFilter = "multiplyBlendMode"` multiplies emitted light exactly. A layer that is drawn once and left alone stops being composited with the filter after about a second and shows as an opaque sheet, so it must keep redrawing. `MultiplyRenderer` draws from its own thread with a dispatch timer (not MTKView, not the main thread: a main-thread timer once let 2.25 s pass between frames in normal use), and the service holds an activity against App Nap. `status --json` reports `overlayMaxFrameGap` (frames that reached the screen; keep it well under a second) and `mainThreadMaxGap`. `defaults write io.github.overbright debugCapturableOverlay -bool true` makes screenshots include the layer (they show the multiply but not the white sheet); `debugStopRedraw` stops the frames for tests. Check this on a black screen, where the failure is obvious; on a white screen it looks like success.
-  - Spaces and Mission Control transitions draw the layer without its multiply: a white sheet. At `.screenSaver` level even Control+arrow switches did it; at `CGShieldingWindowLevel()` those are clean. `SpaceTransitionWatcher` hides the layer for the rest: an active HID tap on Dock swipe events (type 30) and Space/Mission Control keys hides it before passing them on (a listen-only tap lost the race), and a 20 Hz check for full-screen WindowManager windows at layers 1–100 covers Mission Control. `status --json` → `transitions` counts events and hides. Screenshots never show the white sheet; only the user's eyes (or a camera in the dark) do.
-- macOS dims ordinary white by about 9% once the backlight reaches its EDR peak, not during the ramp (`EDRWhiteCorrection`).
+  - Spaces and Mission Control transitions draw the layer without its multiply: a white sheet. This is why `direct` became the default. At `.screenSaver` level even Control+arrow switches did it; at `CGShieldingWindowLevel()` those are clean. `SpaceTransitionWatcher` hides the layer for the rest: an active HID tap on Dock swipe events (type 30) and Space/Mission Control keys hides it before passing them on (a listen-only tap lost the race), and a 20 Hz check for full-screen WindowManager windows at layers 1–100 covers Mission Control. `status --json` → `transitions` counts events and hides. Screenshots never show the white sheet; only the user's eyes (or a camera in the dark) do.
+  - macOS dims ordinary white by about 9% once the backlight reaches its EDR peak, not during the ramp (`EDRWhiteCorrection`).
   - A layer change takes about 0.15 s to show (0.4 s at 4 frames per second).
   - The ambient light sensor does not see the screen.
   - SMC `PBLR` is backlight power in watts. It is linear in nits below 100%, but it follows LED drive, not emitted light, so it cannot judge the boost.
@@ -77,8 +85,10 @@ All sources are in `Sources/Overbright/`.
 | `Models/ColorProfileIdentity.swift` | Telling a real color-profile change from a transient notification |
 | `Controllers/BoostController.swift` | The state machine: enable, disable, suspend/resume, recovery |
 | `Services/GammaTableService.swift` | Reading, scaling and restoring the gamma table |
+| `Services/DirectPanelService.swift` | The direct method: writes, maintains and restores the framebuffer's `BLNitsCap` and `IOMFBBrightnessLevel` |
 | `Services/EDRTriggerService.swift` | The invisible HDR layer that opens EDR headroom (classic method) |
-| `Services/EDROverlayService.swift` | The full-screen multiplying HDR layer that is the boost on macOS 27.2+ |
+| `Services/EDROverlayService.swift` | The full-screen multiplying HDR layer (`overlay`, the fallback on macOS 27.2+) |
+| `Services/SpaceTransitionWatcher.swift` | Hides the overlay during Spaces and Mission Control transitions |
 | `Services/DDCService.swift` | IOAVService I2C transport (Apple Silicon, loaded with dlsym) and endpoint discovery |
 | `Services/ExternalDisplayManager.swift` | External displays: detection, DDC/macOS/software choice, coalesced writes, software dimming |
 | `Services/PanelLightService.swift` | Read-only panel readings: live backlight nits, peak, cap, CoreBrightness standard white, model; `readings()` for `PanelSupport` |
@@ -94,6 +104,7 @@ All sources are in `Sources/Overbright/`.
 | `App/AppDelegate.swift` | Start-up, sleep/wake/session observers, applying the config |
 | `App/OverbrightApplication.swift` | Entry point; routes CLI commands; the hardware self-test |
 | `Support/AppInfo.swift` | Name, bundle identifier, repository URL |
+| `Support/DisplayLookup.swift` | Finding the built-in display and its screen |
 | `Support/L10n.swift` | Language selection |
 
 ## Conventions that matter
@@ -105,7 +116,7 @@ All sources are in `Sources/Overbright/`.
 - **One scale, one indicator.** With the key tap running, Overbright handles every plain F1/F2 for the built-in display (`AppDelegate.handleBuiltInKey` → `BoostController.stepScale`) and swallows it, so macOS never shows its own indicator as well. Without the tap, macOS keeps the keys. Do not reintroduce a path where both indicators can appear.
 - **No model numbers in code.** Every number that differs between Macs (standard white, peak, ceiling, headroom) comes from `PanelReadings` and is decided in `PanelSupport`, which is pure and covered for each model in `Tests/LogicTests` with simulated readings. Add a model there rather than a model check in a service. A panel that peaks under 1000 nits (MacBook Air, 13" MacBook Pro) must never be driven. Only a 14" MacBook Pro (27.2.1, measured) and a 16" M1 Max (27.2, readings only) have been checked on real hardware; keep README's "Supported Macs" honest when that changes.
 - **Direct method (default on 27.2): framebuffer `BLNitsCap` + `IOMFBBrightnessLevel`.** `DirectPanelService` writes both (cap first) as 16.16 nits, never above the panel's own peak (`PanelSupport.writeLimit`; nothing without a known XDR peak), reads the cap back and reports a write macOS did not take as a failure (the controller then falls back to `overlay`), keeps the previous values in defaults until written back (`recoverIfNeeded` at launch), follows macOS while it ramps and puts the boost back once its values have settled for 1 s (writing over every ramp step flickered), follows a new cap as the new standard white (ambient), and leaves a backlight below standard to the controller (the user dimmed: the boost ends, then macOS recomputes via a native-brightness nudge). Never disable or work around the panel's thermal limit; `maxNits` stops at 1300. Measured on a 14" MacBook Pro, 27.2: 1000 nits held for a minute at 10.7 W; 1300 sagged after ~10 s; 1600 was overridden by macOS within 2 s. `status --json` → `direct`.
-- **Overlay method: never write the gamma table.** On macOS 27.2+ the boost is `EDROverlayService` alone (see the measured facts above). Writing any table, even an identity one, while EDR starts makes white jump to the full backlight. Measure any change to the boost with `light-check.sh`, and look at a black screen too.
+- **Overlay method: never write the gamma table.** With `overlay` the boost is `EDROverlayService` alone (see the measured facts above). Writing any table, even an identity one, while EDR starts makes white jump to the full backlight. Measure any change to the boost with `light-check.sh`, and look at a black screen too.
 - **Never exceed the reported headroom.** In `.classic` the gamma factor is capped by `maximumExtendedDynamicRangeColorComponentValue` at the moment of applying; in `.overlay` the multiplier is limited by the same headroom, which macOS applies to the layer. `BoostLevel.classicMaximum` (160%) and `BoostCalibration` are the classic method's calibrated envelope: do not raise them. With `.overlay`, `BoostLevel.maximum` is the panel's measured ceiling (`PanelCeiling`: headroom at the peak ÷ `EDRWhiteCorrection.full`, stored as `panelBoostMaximum` in the app's defaults), never above `absoluteMaximum`. A user-facing ceiling belongs in `maxLevel` (`"auto"` or a number), which can only lower it.
 - **The config file is the single source of truth for settings** (`~/.config/overbright/config.json`). Do not add a second settings store. `UserDefaults` holds only runtime state: the last level and the recovery markers.
 - **Config must stay forgiving.** Every field is optional. A bad entry produces a warning in `Config.warnings` and falls back to its default; it must never crash the app or block the rest of the file. Unreadable JSON keeps the previous settings.
