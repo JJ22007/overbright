@@ -87,6 +87,7 @@ All sources are in `Sources/Overbright/`.
 | `Models/BrightnessMediaKeyEvent.swift` | Decoding the system brightness-key events |
 | `Models/BacklightObservation.swift` | Tolerating brief backlight read failures |
 | `Models/DDC.swift` | DDC/CI request and reply bytes; `ExternalBrightness` steps and scaling |
+| `Models/AgentInterface.swift` | `Readback` (does the panel prove the boost or the restore) and `MCPServer` (`overbright mcp`: JSON-RPC over stdio, four tools, each runs a command and polls the readback) |
 | `Models/ColorProfileIdentity.swift` | Telling a real color-profile change from a transient notification |
 | `Controllers/BoostController.swift` | The state machine: enable, disable, suspend/resume, recovery |
 | `Services/GammaTableService.swift` | Reading, scaling and restoring the gamma table |

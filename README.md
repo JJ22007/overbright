@@ -184,6 +184,7 @@ overbright display dell 60   # external display by name, id or "all"
 overbright display all down
 overbright display dell -40  # backlight at 0, picture darkened to 60%
 overbright report            # a Markdown report for a model report issue
+overbright mcp               # the same, as MCP tools for agents (below)
 overbright status --json
 ```
 
@@ -230,6 +231,32 @@ overbright preset outdoors
 # Let an agent check before it changes anything
 overbright status --json | jq -e '.supported'
 ```
+
+### As MCP tools
+
+`overbright mcp` serves the command as a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio, with no dependencies. Add it to your agent's MCP config with the full path:
+
+```json
+{ "mcpServers": { "overbright": { "command": "/Users/you/.local/bin/overbright", "args": ["mcp"] } } }
+```
+
+| Tool | What it does |
+|---|---|
+| `status` | State, level and method, and what the panel reads now. Changes nothing. |
+| `set_brightness` | `{"percent": 150}`. Waits for the panel to settle. |
+| `restore` | Boost off, back to standard brightness. Waits for the backlight to come down. |
+| `report` | The `overbright report` Markdown. Changes nothing. |
+
+Every result carries the panel's readback, so an agent gets proof and not just "done". `readback` can be:
+
+- `reached`: a `direct` boost is at the target.
+- `missed`: a `direct` boost is not at the target.
+- `restored`: the backlight is back at standard white.
+- `notRestored`: macOS is still holding the backlight up.
+- `notDirect`: `overlay` and `classic` draw on screen, so the backlight can't prove them.
+- `unknown`: no reading.
+
+`set_brightness` and `restore` are errors unless the readback proves them. The tools add no display behaviour: each runs the matching command. `status --json` has the same `readback` object.
 
 ## Build your own
 

@@ -529,10 +529,6 @@ expect(PanelSupport.methods(configured: .classic, major: 27, minor: 2) == [.clas
 expect(Config().configuredBoostMethod == nil, "auto is no configured method")
 expect(parsed(#"{"boostMethod": "overlay"}"#).configuredBoostMethod == .overlay, "a named method is configured")
 
-if failureCount > 0 {
-    exit(1)
-}
-
 // Direct method: what to do once macOS's own values have settled.
 let darker = DirectPanel.settled(cap: 600, level: 600, writtenCap: 943, standard: 720, ceiling: 1000, peak: 1600)
 expect(darker == .init(reapply: true, newStandard: 600), "a darker room (720 to 600) is followed, not taken for dimming")
@@ -547,4 +543,65 @@ expect(sameCap == .init(reapply: true, newStandard: nil), "macOS rewrote the lev
 let hdrCap = DirectPanel.settled(cap: 1600, level: 1600, writtenCap: 786, standard: 600, ceiling: 1000, peak: 1600)
 expect(hdrCap.newStandard == nil, "an HDR cap at the peak is not a new standard white")
 
+// Readback: what an agent is told after a command.
+expect(Readback.judge(boosted: true, method: "direct", targetNits: 900, panelNits: 898, capNits: 900) == .reached, "readback: boost at the target is reached")
+expect(Readback.judge(boosted: true, method: "direct", targetNits: 900, panelNits: 600, capNits: 900) == .missed, "readback: boost short of the target is missed")
+expect(Readback.judge(boosted: true, method: "overlay", targetNits: nil, panelNits: 1600, capNits: 1600) == .notDirect, "readback: an overlay boost cannot be proved from the backlight")
+expect(Readback.judge(boosted: false, method: "direct", targetNits: nil, panelNits: 600, capNits: 600) == .restored, "readback: off at standard white is restored")
+expect(Readback.judge(boosted: false, method: "direct", targetNits: nil, panelNits: 150, capNits: 600) == .restored, "readback: below 100% is restored")
+expect(Readback.judge(boosted: false, method: "overlay", targetNits: nil, panelNits: 1600, capNits: 600) == .notRestored, "readback: backlight still at the peak is not restored")
+expect(Readback.judge(boosted: false, method: "direct", targetNits: nil, panelNits: nil, capNits: 600) == .unknown, "readback: no reading is unknown")
+expect(Readback.reached.proves && Readback.restored.proves && !Readback.missed.proves && !Readback.notDirect.proves, "readback: only reached and restored prove")
+
+// MCP server, against a fake app.
+final class FakeApp {
+    var calls: [[String]] = []
+    var readbacks: [String]
+    init(_ readbacks: [String]) { self.readbacks = readbacks }
+    func run(_ args: [String]) -> (code: Int32, output: String) {
+        calls.append(args)
+        if args.first == "status" {
+            let rb = readbacks.count > 1 ? readbacks.removeFirst() : readbacks[0]
+            return (0, #"{"state":"on","level":150,"boostMethod":"direct","readback":{"readback":"\#(rb)","panelNits":900,"targetNits":900}}"#)
+        }
+        if args.first == "report" { return (0, "### report") }
+        return (0, "ok")
+    }
+}
+func mcpObject(_ text: String?) -> [String: Any] {
+    (text.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]) ?? [:]
+}
+func mcpResult(_ text: String?) -> [String: Any] { mcpObject(text)["result"] as? [String: Any] ?? [:] }
+do {
+    let app = FakeApp(["missed", "missed", "reached"])
+    var waited = 0.0
+    let server = MCPServer(run: app.run, wait: { waited += $0 }, version: "test")
+    let initialize = mcpResult(server.handle(#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}"#))
+    expect(initialize["protocolVersion"] as? String == "2025-03-26", "mcp: answers in the client's protocol version")
+    expect(server.handle(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#) == nil, "mcp: notifications get no reply")
+    let tools = (mcpResult(server.handle(#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#))["tools"] as? [[String: Any]])?.compactMap { $0["name"] as? String }
+    expect(tools == ["status", "set_brightness", "restore", "report"], "mcp: lists the four tools")
+    let set = mcpResult(server.handle(#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"set_brightness","arguments":{"percent":150}}}"#))
+    let setContent = set["structuredContent"] as? [String: Any] ?? [:]
+    expect(app.calls.contains(["set", "150.0"]), "mcp: set_brightness runs `set`")
+    expect(setContent["readback"] as? String == "reached" && set["isError"] as? Bool == false, "mcp: set_brightness waits for the panel to reach the target")
+    expect(waited == 0.5, "mcp: polls until settled")
+}
+do {
+    let app = FakeApp(["missed"])
+    let server = MCPServer(run: app.run, wait: { _ in }, version: "test")
+    let set = mcpResult(server.handle(#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"set_brightness","arguments":{"percent":150}}}"#))
+    expect(set["isError"] as? Bool == true, "mcp: a boost that never reaches the panel is an error")
+    let restore = mcpResult(server.handle(#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"restore","arguments":{}}}"#))
+    expect(app.calls.contains(["off"]) && restore["isError"] as? Bool == true, "mcp: restore runs `off` and fails until restored")
+    let unknown = mcpObject(server.handle(#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"nope"}}"#))
+    expect((unknown["error"] as? [String: Any])?["code"] as? Int == -32602, "mcp: an unknown tool is an invalid-params error")
+    let bad = mcpObject(server.handle("not json"))
+    expect((bad["error"] as? [String: Any])?["code"] as? Int == -32700, "mcp: bad JSON is a parse error")
+}
+
+if failureCount > 0 {
+    print("FAILED: \(failureCount) of \(checkCount) logic checks")
+    exit(1)
+}
 print("ok: \(checkCount)/\(checkCount) logic checks passed")
