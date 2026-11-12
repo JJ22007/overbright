@@ -10,8 +10,8 @@ import os
 /// Measured on a 14" MacBook Pro, macOS 27.2: writes are accepted and the
 /// backlight's power follows (6.8 W at 600 nits, 10.8 W at 800, 12.5 W at
 /// 1000). macOS rewrites both values whenever it adjusts the backlight itself
-/// (ambient light, a brightness change), so `maintain()` puts them back four
-/// times a second. The panel's own thermal limit is left alone.
+/// (ambient light, a brightness change); `maintain()` follows macOS until its
+/// values settle, then puts the boost back. The panel's own thermal limit is left alone.
 ///
 /// The values in place before the boost are kept in the defaults until they
 /// are written back, so a crash is undone at the next launch.
@@ -78,25 +78,49 @@ final class DirectPanelService {
         return write(target)
     }
 
-    /// Puts the boost back after macOS rewrote the backlight. A lower backlight
-    /// than standard white means the user dimmed the display; that is left for
-    /// the controller, which ends the boost.
+    /// macOS's last values that differ from ours, and when they last changed.
+    private var systemCap: Double?
+    private var systemLevel: Double?
+    private var systemChangedAt: TimeInterval = 0
+
+    /// How long macOS's values must stay unchanged before the boost goes back.
+    /// macOS ramps the backlight in small steps over a second or more (ambient
+    /// light, automatic brightness); writing over every step made the screen
+    /// flicker between bright and dark. Following macOS until it settles turns
+    /// each adjustment into one short dip.
+    static let settleTime: TimeInterval = 1.0
+
+    /// Puts the boost back after macOS rewrote the backlight, once macOS has
+    /// settled. A backlight below standard white means the user dimmed the
+    /// display; that is left for the controller, which ends the boost.
     func maintain() {
         guard framebuffer != 0, let target = targetNits,
               let cap = Self.read(framebuffer, "BLNitsCap"),
               let current = Self.read(framebuffer, "IOMFBBrightnessLevel") else { return }
+        let ours = abs(current - target) <= 2 && abs(cap - (writtenCap ?? target)) <= 2
+        guard !ours else {
+            systemCap = nil
+            systemLevel = nil
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if systemCap.map({ abs($0 - cap) > 0.5 }) ?? true || systemLevel.map({ abs($0 - current) > 0.5 }) ?? true {
+            systemCap = cap
+            systemLevel = current
+            systemChangedAt = now
+            return
+        }
+        guard now - systemChangedAt >= Self.settleTime else { return }
+        guard current >= (standardNits ?? 0) * 0.95 else { return }
         if let writtenCap, abs(cap - writtenCap) > 1, cap > 50, cap < ceilingNits {
             // macOS set a new standard white (ambient light); follow it.
             standardNits = cap
             logger.notice("standard white now \(cap, privacy: .public) nits")
-            apply(level: level)
-            rewrites += 1
-            return
         }
-        if abs(current - target) > 2, current >= (standardNits ?? 0) * 0.95 {
-            write(target)
-            rewrites += 1
-        }
+        apply(level: level)
+        rewrites += 1
+        systemCap = nil
+        systemLevel = nil
     }
 
     /// Writes back the values from before the boost.
