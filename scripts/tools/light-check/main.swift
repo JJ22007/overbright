@@ -21,13 +21,15 @@ import Foundation
 setvbuf(stdout, nil, _IOLBF, 0)
 var outputDirectory = "outputs/light-check"
 var cli = (NSHomeDirectory() as NSString).appendingPathComponent(".local/bin/overbright")
+var force = false
 var arguments = CommandLine.arguments.dropFirst().makeIterator()
 while let argument = arguments.next() {
     switch argument {
     case "--out": outputDirectory = arguments.next() ?? outputDirectory
     case "--cli": cli = arguments.next() ?? cli
+    case "--force": force = true
     default:
-        FileHandle.standardError.write(Data("usage: light-check [--out dir] [--cli path]\n".utf8))
+        FileHandle.standardError.write(Data("usage: light-check [--out dir] [--cli path] [--force]\n".utf8))
         exit(2)
     }
 }
@@ -63,6 +65,7 @@ guard let sampler = BrightnessSampler() else { fail("no built-in display") }
 let before = status()
 guard let startScale = before["scale"] as? Double else { fail("Overbright is not running (scripts/install.sh)") }
 let startState = before["state"] as? String ?? "off"
+let startLevel = before["level"] as? Double
 
 // MARK: Screen: black with a white (or grey) patch
 
@@ -99,11 +102,7 @@ func pump(_ seconds: Double) {
 
 func restore() {
     window.orderOut(nil)
-    if startState == "on" || startScale <= 100 {
-        overbright(["set", String(format: "%.2f", startScale)])
-    } else {
-        overbright(["off"])
-    }
+    restoreBoost(state: startState, scale: startScale, level: startLevel) { overbright($0) }
 }
 
 // MARK: Run
@@ -126,6 +125,13 @@ try? FileManager.default.removeItem(atPath: absoluteCameraFile)
 do { try camera.run() } catch { restore(); fail("could not start the camera meter: \(error)") }
 pump(4)
 
+let room = checkRoom(cameraFile: absoluteCameraFile, setPatch: setPatch, pump: pump, now: now)
+print("room: \(room.summary)")
+if !room.isDark && !force {
+    restore(); camera.terminate()
+    fail("\(RoomCheck.advice)\n(\(room.summary))")
+}
+
 struct Mark { var time: Double; var label: String; var scale: String }
 var marks: [Mark] = []
 var panelTrace: [(Double, Double)] = []
@@ -134,6 +140,8 @@ func mark(_ label: String, _ scale: String = "") { marks.append(Mark(time: now()
 print("presses: 10 × F2 (real key), 10 × F1")
 mark("start")
 pump(1.5)
+// The top of the key steps: 160% for the overlay, 162.5% for direct.
+var topScale = 160.0
 for direction in ["up", "down"] {
     for _ in 0..<10 {
         let t = now()
@@ -142,6 +150,10 @@ for direction in ["up", "down"] {
         let scale = text.components(separatedBy: "scale ").last?.replacingOccurrences(of: ")", with: "") ?? "?"
         marks.append(Mark(time: t, label: direction, scale: scale))
         pump(1.5)
+        if direction == "up" {
+            let json = (try? JSONSerialization.jsonObject(with: Data(overbright(["status", "--json"]).1.utf8))) as? [String: Any]
+            topScale = json?["scale"] as? Double ?? topScale
+        }
     }
 }
 print("release: 24 s at 100% while macOS lowers the backlight")
@@ -183,10 +195,10 @@ func mean(_ from: Double, _ to: Double) -> Double {
 
 var failures: [String] = []
 var rows: [String] = []
-// Camera units per unit of log light, from 100% → 160% (a known ratio of 1.6).
+// Camera units per unit of log light, from 100% to the top of the key steps.
 let firstUp = marks.first { $0.label == "up" }!
 let lastUp = marks.last { $0.label == "up" }!
-let sensitivity = (mean(lastUp.time + 1.2, lastUp.time + 1.45) - mean(firstUp.time - 1.2, firstUp.time - 0.05)) / log(1.6)
+let sensitivity = (mean(lastUp.time + 1.2, lastUp.time + 1.45) - mean(firstUp.time - 1.2, firstUp.time - 0.05)) / log(topScale / 100)
 /// The worst excursion past the start and end of a press, in % of light.
 func overshoot(_ t: Double, before: Double, after: Double, up: Bool) -> Double {
     let bins = stride(from: t, to: t + 1.45, by: 0.1).map { mean($0, $0 + 0.1) }.filter { !$0.isNaN }
@@ -196,7 +208,7 @@ func overshoot(_ t: Double, before: Double, after: Double, up: Bool) -> Double {
 let start = marks.first { $0.label == "start" }!
 var previous = mean(start.time + 0.3, start.time + 1.45)
 let reference100 = previous
-var at160 = Double.nan
+var atTop = Double.nan
 let presses = marks.filter { $0.label == "up" || $0.label == "down" }
 for (index, press) in presses.enumerated() {
     let after = mean(press.time + 1.2, press.time + 1.45)
@@ -212,7 +224,7 @@ for (index, press) in presses.enumerated() {
         verdict = String(format: "FAIL: overshoots by %.1f%%", over)
         failures.append("press \(index + 1) (\(press.label) → \(press.scale)): \(verdict)")
     }
-    if press.scale.hasPrefix("160") { at160 = after }
+    if press.time == lastUp.time { atTop = after }
     rows.append(String(format: "| %d | %@ | %@ | %.2f → %.2f | %+.2f | %.2f s | %.1f%% | %@ |", index + 1,
                        press.label == "up" ? "F2" : "F1", press.scale, previous, after, delta, t90, over, verdict))
     previous = after
@@ -243,9 +255,9 @@ let lastPress = presses.last!
 let report = """
 # Light check
 
-\(failures.isEmpty ? "**PASS**" : "**FAIL**"). Measured with the built-in camera, real key presses, \(frames.count) camera frames.
+\(failures.isEmpty ? "**PASS**" : "**FAIL**"). Measured with the built-in camera, real key presses, \(frames.count) camera frames. Room: \(room.summary).\(room.isDark ? "" : " **Not dark enough: not a valid result.**")
 
-Sensitivity: 100% → 160% moved the camera from \(String(format: "%.2f", reference100)) to \(String(format: "%.2f", at160)), \(String(format: "%.2f", sensitivity)) units per unit of log light. Percentages below are light, derived from that.
+Sensitivity: 100% → \(String(format: "%g", topScale))% moved the camera from \(String(format: "%.2f", reference100)) to \(String(format: "%.2f", atTop)), \(String(format: "%.2f", sensitivity)) units per unit of log light. Percentages below are light, derived from that.
 
 ## Presses
 

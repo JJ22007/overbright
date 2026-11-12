@@ -13,7 +13,7 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
 # Build the camera meter app.
 bash scripts/brightness-camera.sh --build-only
 binary=.build/light-check
-sources=(scripts/tools/BrightnessSampler.swift scripts/tools/light-check/main.swift)
+sources=(scripts/tools/BrightnessSampler.swift scripts/tools/CameraRoom.swift scripts/tools/light-check/main.swift)
 if [[ ! -x $binary ]] || [[ -n $(find "${sources[@]}" -newer "$binary") ]]; then
   mkdir -p .build
   swiftc -O -swift-version 5 "${sources[@]}" -o "$binary"
