@@ -7,12 +7,13 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 - Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
 - To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
-## Unreleased
+## 2.6
 
 - **More MacBook Pros.** Nothing is tied to the 14" MacBook Pro any more. Standard white, the peak, the ceiling and the scale's top are read from each panel, so a 16" or an M1/M2 model gets its own numbers (200% on M1 and M2, whose standard white is 500 nits; 166% on M3 and later). Every write is bounded by the panel's own peak. See "Supported Macs" in the README for what was measured and what is only expected to work, and please report your model.
 - **Falls back instead of failing.** When the direct method cannot drive the panel, or macOS does not take the write, the boost uses the overlay method instead of stopping with an error.
 - **Fixed: a boost started while HDR was on screen went to the full 1600 nits.** With an HDR video playing (or another boost tool holding HDR open), macOS raises the backlight cap to the peak, and the direct method took that for standard white. Standard white now comes from CoreBrightness in that case.
 - **Clear "not supported".** A MacBook Air, a 13" MacBook Pro or an Intel MacBook Pro now says why in the menu and in `overbright status`, and nothing is written to its display. `status --json` adds `unsupportedReason` and `panel` (model, peak, cap, standard white, the methods it will try).
+- **Checked on a 14" MacBook Pro (M6, macOS 27.2.1)** before release: 120%, 150% and 166% drove the panel to 720, 900 and 996 nits, 100% went back to 600, quitting while boosted restored the display, and the hardware self-test passed.
 
 ## 2.5
 
