@@ -42,7 +42,7 @@ final class PanelLightService {
     /// The framebuffer that reports a backlight in nits. External displays
     /// report 1.0 (65536) or nothing, so the built-in one is the only match
     /// above a couple of nits.
-    private static func findBuiltInFramebuffer() -> io_registry_entry_t {
+    static func findBuiltInFramebuffer() -> io_registry_entry_t {
         for className in framebufferClasses {
             let found = findBuiltInFramebuffer(className: className)
             if found != 0 { return found }

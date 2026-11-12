@@ -115,7 +115,8 @@ DDC/CI 需要 Apple 芯片的 Mac，Intel Mac 上所有副屏都走软件调暗�
 | `externalDisplays` | `true` | 在菜单里显示副屏并控制它们的亮度。 |
 | `externalKeys` | `true` | 用 Control+F1/F2 调节副屏。需要 `brightnessKeys` 开启并授予「辅助功能」权限。 |
 | `showHUD` | `true` | 调节副屏时在那块屏上显示亮度指示。 |
-| `boostMethod` | `"auto"` | 增亮的实现方式：`"overlay"`（macOS 27.2 及以后）或 `"classic"`（更早的版本）。`"auto"` 按系统版本自动选择；只有增亮看起来不对时才需要手动指定。见[工作原理](#工作原理)。 |
+| `maxNits` | `1000` | direct 方式的上限，单位尼特，700 到 1300。1000 是全屏能长时间保持的亮度；再往上，面板自己的过热保护会在几秒内把背光压下来。 |
+| `boostMethod` | `"auto"` | 增亮的实现方式：`"direct"`（macOS 27.2 及以后）、`"overlay"` 或 `"classic"`（更早的版本）。`"auto"` 按系统版本自动选择；只有增亮看起来不对时才需要手动指定。见[工作原理](#工作原理)。 |
 | `extraDimming` | `true` | 允许副屏低于 0%（最低 −90%）：背光到最低后，再把画面压暗。 |
 | `presets` | `[]` | 命名亮度：`name` 和 `level`（100 到 400）。会出现在菜单里，也能用 `overbright preset` 调用。 |
 
@@ -172,7 +173,7 @@ overbright status --json
   "presets" : [],
   "scale" : 125,
   "scaleTop" : 244,
-  "boostMethod" : "overlay",
+  "boostMethod" : "direct",
   "state" : "on",
   "supported" : true,
   "version" : "2.0"
@@ -220,6 +221,8 @@ App 必须在运行；命令会和它通信，等屏幕真的变了才返回。`
 ## 工作原理
 
 macOS 只有在屏幕上有 HDR 内容时，才会给 XDR 屏幕开放高于标准白的亮度「余量」。Overbright 在内置屏幕上放一个很小的、看不见的 HDR 图层来打开这部分余量。这时 macOS 会把背光拉到峰值（MacBook Pro 上是 1600 尼特），并且正常情况下会把普通内容按比例压回去，让它看起来不变。Overbright 让普通白色分到其中一部分光。具体做法取决于系统版本（`boostMethod`）：
+
+- **direct**（macOS 27.2 及以后的默认方式）：不用图层、不写 Gamma 表、不开 HDR，Overbright 直接把面板背光推过标准白。150% 就是标准白（600 尼特，环境亮时更高）的 1.5 倍，最高到 `maxNits`（1000）。macOS 自己调背光（比如随环境光）时会覆盖这个值，Overbright 在 0.25 秒内补回；你自己调低亮度时，增亮结束。增亮结束或程序崩溃后，原来的值会写回。屏幕上不画任何东西，所以切桌面和调度中心一切照常。14 英寸 MacBook Pro 实测：100% 时背光功率 6.8 W，166%（996 尼特）时 10.7 W，一分钟内保持稳定。
 
 - **overlay**（macOS 27.2 及以后）：Gamma 表已经改变不了面板实际发出的光，所以 Overbright 在内置屏幕上盖一层全屏 HDR 图层，把它下面的所有内容乘以增亮倍数：160% 就是乘 1.6。黑色仍然是黑色。这一层不会出现在截图和录屏里，也不会挡住点击。在 HDR 模式下，背光到达峰值后 macOS 会把普通白色画暗约 9%，图层会在背光到位时把这部分补回来，所以百分比是相对真正的标准白。不写任何 Gamma 表。
 - **classic**（更早的 macOS）：macOS 在 Gamma 表之后才做压缩，所以表的值大于 1 就能把白色抬进余量里：160% 约等于表端点 1.6，上限是 macOS 报告的余量。

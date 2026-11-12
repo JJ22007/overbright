@@ -83,13 +83,46 @@ enum BuiltInBrightnessScale {
 ///   macOS's scaling, so white jumps to the full backlight. Measured with a
 ///   camera. Instead a full-screen EDR layer multiplies everything under it by
 ///   the boost level (1.0-1.6) and no table is ever written.
+///
+/// - `.direct` (default on macOS 27.2 and later): no layer and no table. The
+///   panel's backlight is driven past standard white directly, through the
+///   framebuffer's nits cap and level (`DirectPanelService`). Nothing is drawn
+///   on screen, so Spaces and Mission Control transitions, which draw the
+///   overlay as a white sheet, are unaffected.
 enum BoostMethod: String, CaseIterable {
     case classic
     case overlay
+    case direct
 
     /// The method for a macOS version, used when the config says "auto".
     static func automatic(major: Int, minor: Int) -> BoostMethod {
-        (major, minor) >= (27, 2) ? .overlay : .classic
+        (major, minor) >= (27, 2) ? .direct : .classic
+    }
+}
+
+/// The arithmetic of the direct method, in nits.
+///
+/// `standard` is the panel's standard white right now: the framebuffer's nits
+/// cap, which macOS sets for ordinary content (600 on a 14" MacBook Pro, more
+/// in bright surroundings). A boost level multiplies it, up to `ceiling`
+/// (`maxNits` in the config, 1000 by default: what the panel holds across the
+/// whole screen; above that its own thermal limit pulls the backlight down
+/// within seconds, measured at 1300, and macOS overrides 1600 at once).
+enum DirectPanel {
+    static let defaultCeiling: Double = 1000
+    static let ceilingRange: ClosedRange<Double> = 700...1300
+
+    static func targetNits(standard: Double, level: Float, ceiling: Double) -> Double? {
+        guard standard.isFinite, standard > 50, level.isFinite, ceiling.isFinite else { return nil }
+        return min(standard * Double(max(level, 1)), max(ceiling, standard))
+    }
+
+    /// The top of the scale: the ceiling over standard white, as a level
+    /// (1000 / 600 = 1.66). nil when there is no room above standard.
+    static func maximumLevel(standard: Double, ceiling: Double) -> Float? {
+        guard standard.isFinite, standard > 50, ceiling.isFinite else { return nil }
+        let level = (ceiling / standard * 100).rounded(.down) / 100
+        return level > 1.05 ? min(Float(level), BoostLevel.absoluteMaximum) : nil
     }
 }
 

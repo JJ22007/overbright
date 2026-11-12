@@ -434,6 +434,7 @@ final class CommandServer {
             "overlayMaxFrameGap": (boostController.overlayMaxFrameGap * 1000).rounded() / 1000,
             "mainThreadMaxGap": (boostController.mainThreadMaxGap * 1000).rounded() / 1000,
             "transitions": boostController.transitionDiagnostics,
+            "direct": boostController.directDiagnostics,
             "externalDisplays": externalDisplays.displays.map {
                 [
                     "id": Int($0.id),
