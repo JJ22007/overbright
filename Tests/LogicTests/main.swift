@@ -600,6 +600,32 @@ do {
     expect((bad["error"] as? [String: Any])?["code"] as? Int == -32700, "mcp: bad JSON is a parse error")
 }
 
+// lowBatteryOff and toggleShortcut.
+let low = LowBattery.Reading(percent: 19, onBattery: true)
+let high = LowBattery.Reading(percent: 21, onBattery: true)
+let plugged = LowBattery.Reading(percent: 19, onBattery: false)
+expect(LowBattery.shouldTurnOff(previous: high, current: low, threshold: 20, boosted: true), "low battery: crossing the threshold ends the boost")
+expect(!LowBattery.shouldTurnOff(previous: low, current: LowBattery.Reading(percent: 18, onBattery: true), threshold: 20, boosted: true), "low battery: a boost turned back on below the threshold stays on")
+expect(LowBattery.shouldTurnOff(previous: plugged, current: low, threshold: 20, boosted: true), "low battery: unplugging below the threshold ends the boost")
+expect(!LowBattery.shouldTurnOff(previous: high, current: plugged, threshold: 20, boosted: true), "low battery: on the adapter nothing happens")
+expect(!LowBattery.shouldTurnOff(previous: high, current: low, threshold: 20, boosted: false), "low battery: no boost, nothing to do")
+expect(LowBattery.shouldTurnOff(previous: nil, current: low, threshold: 20, boosted: true), "low battery: the first reading counts")
+expect(Shortcut.parse("ctrl+opt+cmd+b") == Shortcut(keyCode: 0x0B, modifiers: Shortcut.control | Shortcut.option | Shortcut.command), "shortcut: parses modifiers and a letter")
+expect(Shortcut.parse("Cmd + Shift + F12")?.keyCode == 0x6F, "shortcut: F-keys, any case and spacing")
+expect(Shortcut.parse("shift+b") == nil, "shortcut: shift alone would take an ordinary key")
+expect(Shortcut.parse("cmd+b+c") == nil && Shortcut.parse("cmd+") == nil && Shortcut.parse("cmd+hyper") == nil, "shortcut: one known key")
+expect(parsed(#"{"lowBatteryOff": 15, "toggleShortcut": "ctrl+opt+b"}"#).lowBatteryOff == 15, "config: lowBatteryOff is a percentage")
+expect(parsed(#"{"toggleShortcut": "ctrl+opt+b"}"#).toggleShortcut == "ctrl+opt+b", "config: toggleShortcut is kept")
+expect(parsed(#"{"lowBatteryOff": false, "toggleShortcut": false}"#).lowBatteryOff == nil, "config: false turns them off")
+expect(Config(dictionary: ["lowBatteryOff": 2]).lowBatteryOff == 5, "config: lowBatteryOff clamps to 5")
+expect(Config(dictionary: ["toggleShortcut": "b"]).warnings.count == 1 && Config(dictionary: ["toggleShortcut": "b"]).toggleShortcut == nil, "config: a bad shortcut is a warning, not a shortcut")
+expect(Config(dictionary: ["lowBatteryOff": true]).lowBatteryOff == nil, "config: lowBatteryOff true is a warning")
+if case let .success(withAutomation) = Config.parse(Data(Config(dictionary: ["lowBatteryOff": 15, "toggleShortcut": "ctrl+opt+b"]).json.utf8)) {
+    expect(withAutomation.lowBatteryOff == 15 && withAutomation.toggleShortcut == "ctrl+opt+b" && withAutomation.warnings.isEmpty, "config: the automation options round-trip")
+} else {
+    expect(false, "config: the automation options round-trip")
+}
+
 if failureCount > 0 {
     print("FAILED: \(failureCount) of \(checkCount) logic checks")
     exit(1)

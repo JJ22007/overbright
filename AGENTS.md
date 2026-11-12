@@ -87,6 +87,7 @@ All sources are in `Sources/Overbright/`.
 | `Models/BrightnessMediaKeyEvent.swift` | Decoding the system brightness-key events |
 | `Models/BacklightObservation.swift` | Tolerating brief backlight read failures |
 | `Models/DDC.swift` | DDC/CI request and reply bytes; `ExternalBrightness` steps and scaling |
+| `Models/Automation.swift` | `LowBattery` (when `lowBatteryOff` ends the boost) and `Shortcut` (parsing `toggleShortcut`) |
 | `Models/AgentInterface.swift` | `Readback` (does the panel prove the boost or the restore) and `MCPServer` (`overbright mcp`: JSON-RPC over stdio, four tools, each runs a command and polls the readback) |
 | `Models/ColorProfileIdentity.swift` | Telling a real color-profile change from a transient notification |
 | `Controllers/BoostController.swift` | The state machine: enable, disable, suspend/resume, recovery |
@@ -110,6 +111,7 @@ All sources are in `Sources/Overbright/`.
 | `App/AppDelegate.swift` | Start-up, sleep/wake/session observers, applying the config |
 | `App/OverbrightApplication.swift` | Entry point; routes CLI commands; the hardware self-test |
 | `Support/AppInfo.swift` | Name, bundle identifier, repository URL |
+| `Services/AutomationServices.swift` | `BatteryMonitor` (IOPowerSources) and `ShortcutService` (Carbon hot key, no Accessibility) |
 | `Support/CommandToken.swift` | The per-launch secret every `overbright` request must carry (distributed notifications reach sandboxed apps too; see SECURITY.md) |
 | `Support/DisplayLookup.swift` | Finding the built-in display and its screen |
 | `Support/L10n.swift` | Language selection |
