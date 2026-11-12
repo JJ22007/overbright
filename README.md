@@ -13,11 +13,11 @@
   <a href="#build-your-own">Build your own</a>
 </p>
 
-Overbright opens the extra brightness that a Liquid Retina XDR display normally keeps for HDR video, and lets you use it for everything: as far as the panel goes (244% of standard brightness on a 14" MacBook Pro), from the menu bar, from F1/F2, or from a command. It is about 4,000 lines of Swift with no dependencies and no Xcode project. Settings sit in one JSON file, and anything the file can't do is a short edit away, by you or by your AI coding agent.
+Overbright opens the extra brightness that a Liquid Retina XDR display normally keeps for HDR video, and lets you use it for everything: up to what the panel holds across the whole screen (166% of standard brightness on M3 and later, 200% on M1 and M2, worked out on each Mac from what its panel reports), from the menu bar, from F1/F2, or from a command. It is about 4,000 lines of Swift with no dependencies and no Xcode project. Settings sit in one JSON file, and anything the file can't do is a short edit away, by you or by your AI coding agent.
 
 ## Features
 
-- **Brightness past 100%.** A slider from 100% to the panel's own ceiling, measured from the EDR headroom macOS reports (244% on a 14" MacBook Pro with macOS 27.2; 160% with the classic method). The boost is limited by the headroom macOS reports at that moment, so it never asks the panel for more than it offers.
+- **Brightness past 100%.** A slider from 100% to the panel's own ceiling, worked out from what the panel reports: its standard white, its peak and its EDR headroom. Nothing is tied to one model. The boost never asks the panel for more than its peak, and by default for no more than the 1000 nits an XDR panel holds across the whole screen.
 - **One scale, one indicator.** F1/F2 move along a single scale: 0–100% is the backlight, above 100% the boost, up to the panel's ceiling. Overbright shows one indicator for all of it, and every press changes the brightness within a few hundredths of a second.
 - **External displays too.** Plug a display in and it appears in the menu with its own slider. Control+F1/F2 dims or brightens it, with an on-screen indicator. Most monitors are driven over DDC/CI, exactly like their own buttons; the rest are dimmed in software.
 - **Stays out of the system's way.** Auto-brightness, Control Center and sleep keep working. Overbright follows them instead of fighting them, and puts everything back when you turn it off or quit.
@@ -30,6 +30,28 @@ Overbright opens the extra brightness that a Liquid Retina XDR display normally 
 
 - macOS 13 or later, Apple Silicon or Intel.
 - A built-in display with EDR headroom. In practice that means a MacBook Pro with a Liquid Retina XDR display. On other displays the app says so and leaves brightness alone. Overbright cannot make an ordinary LCD brighter.
+
+## Supported Macs
+
+Every 14" and 16" MacBook Pro with a Liquid Retina XDR display, M1 Pro/Max (2021) and later, should work. Overbright reads each panel's own numbers at run time (standard white, peak and EDR headroom), so it does not need to know the model. Only two Macs have been checked on real hardware so far:
+
+| Mac | macOS | Status |
+|---|---|---|
+| 14" MacBook Pro | 27.2.1 | **Measured.** Every method, with the camera and real key presses (`scripts/light-check.sh`). |
+| 16" MacBook Pro, M1 Max (MacBookPro18,2) | 27.2 | **Panel readings checked.** Support, method, standard white (500 nits), peak (1600) and ceiling (200%) read correctly, including while another app holds HDR open. Light not yet measured. |
+| 14" and 16", M1 Pro/Max and M2 Pro/Max | 13 or later | **Expected to work, untested.** Standard white 500 nits, so the top is 200%. |
+| 14" and 16", M3, M4, M5 and their Pro/Max | 13 or later | **Expected to work, untested.** Standard white 600 nits, so the top is 166%; less in bright light, where macOS raises standard white (up to 1000 nits outdoors on M4 and later, which leaves no room to boost). |
+| MacBook Air, 13" MacBook Pro, Intel MacBook Pro | | **Not supported.** No XDR panel. The menu says so, and nothing is written to the display. |
+| External displays, lid closed | | **No boost.** External displays keep their own 0–100% brightness. |
+
+"Expected to work" means the code paths are covered by tests with each model's readings (`Tests/LogicTests`), not that anyone has looked at the screen. If you have one of these Macs, please [open an issue](https://github.com/JJ22007/overbright/issues/new?template=model-report.md) with the output of `overbright status --json`, whether it works or not.
+
+Every number that differs between models comes from the panel. If anything is missing or looks wrong, Overbright falls back instead of guessing:
+
+- **Standard white** is the backlight cap macOS sets for ordinary content. While something on screen holds HDR open, macOS raises that cap to the peak; Overbright then reads standard white from CoreBrightness instead, and if that fails it does not use the direct method.
+- **The peak** (`limit_max_physical_brightness`) bounds every write. A panel that peaks below 1000 nits is not XDR and is refused. Without a known peak nothing is written.
+- **The ceiling** is `maxNits` (1000 by default), never more than 81% of the panel's peak.
+- **The method.** On macOS 27.2 and later Overbright tries `direct` first. If the panel cannot be driven directly, or macOS does not take the write (it is read back), it falls back to `overlay`. Before 27.2 it uses `classic`. `status --json` shows the method in use (`boostMethod`) and what it read (`panel`).
 
 ## Install
 
@@ -244,7 +266,7 @@ macOS gives an XDR display brightness "headroom" above standard white only while
 - **overlay** (macOS 27.2 and later). The gamma table no longer changes the light the panel emits, so Overbright puts a full-screen HDR layer over the built-in display that multiplies everything under it by the boost level: 160% multiplies by 1.6. Black stays black. The layer is invisible to screenshots and recordings and never takes clicks. In HDR mode macOS draws ordinary white about 9% dimmer once the backlight reaches its peak, so the layer adds that back as the backlight arrives; a percentage is therefore relative to the real standard white. No gamma table is written.
 - **classic** (earlier macOS). macOS scales ordinary content after the gamma table, so a table above 1 lifts white into the headroom: 160% is a table endpoint of about 1.6, capped by the headroom macOS reports.
 
-The percentage is a request on top of standard white (600 nits at full backlight): 160% asks for about 960 nits. The ceiling is the panel's: at its peak macOS reports how far ordinary white can go (the EDR headroom, peak ÷ standard white, 1596 ÷ 600 = 2.67 on a 14" MacBook Pro), and Overbright takes off the 9% it adds back for macOS's dimmer white: 2.67 ÷ 1.09 = 244%. Other models get their own number.
+The percentage is a request on top of standard white (500 or 600 nits at full backlight, depending on the model): 160% of 600 asks for about 960 nits. With the direct method the top is `maxNits` ÷ standard white: 1000 ÷ 600 = 166%, or 1000 ÷ 500 = 200% on M1 and M2. With the overlay method the ceiling is measured: at its peak macOS reports how far ordinary white can go (the EDR headroom, peak ÷ standard white, 1596 ÷ 600 = 2.67 on a 14" MacBook Pro), and Overbright takes off the 9% it adds back for macOS's dimmer white: 2.67 ÷ 1.09 = 244%. Other models get their own number from their own headroom; the 9% was measured on a 14" MacBook Pro only.
 
 Before changing anything, Overbright records the display's original state, and it writes a recovery marker so that even after a crash or a forced quit the next launch restores standard brightness. Reading and setting the system backlight goes through macOS's DisplayServices framework, a private interface that a future macOS version could change.
 
@@ -258,7 +280,7 @@ Before changing anything, Overbright records the display's original state, and i
 - **Not for color-critical work.** The boost can clip highlight detail in HDR photos and video. Restore standard brightness first.
 - **External displays get dimmer and brighter, not overbright.** Going past 100% needs EDR headroom, which only the built-in XDR display has. An external display goes up to its own maximum.
 - **DDC/CI is a conversation with the monitor.** Most answer; some answer slowly, and a few behind docks or adapters do not answer at all and fall back to software dimming. Overbright never writes anything except brightness.
-- **Tested on a limited set of Macs.** CI runs the hardware-independent tests and builds both architectures. It cannot test a real panel.
+- **Tested on a limited set of Macs.** See [Supported Macs](#supported-macs) for what was measured and what is only expected to work. CI runs the hardware-independent tests and builds both architectures. It cannot test a real panel.
 
 ## Coming from Display Boost?
 

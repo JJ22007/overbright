@@ -267,7 +267,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         toggleItem.title = active
             ? L10n.tr("Turn Boost Off", "关闭增亮")
             : L10n.tr("Turn Boost On", "开启增亮")
-        let supported = snapshot.potentialEDRHeadroom > 1.05
+        let supported = snapshot.support == .supported
         toggleItem.isEnabled = active || supported
         slider.isEnabled = supported
         statusTextItem.toolTip = nil
@@ -282,9 +282,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         switch snapshot.state {
         case .off:
             icon = MenuBarIcon.off
-            statusTextItem.title = supported
-                ? L10n.tr("Standard brightness", "标准亮度")
-                : L10n.tr("This display has no XDR headroom", "此屏幕不支持增亮")
+            if case let .unsupported(reason) = snapshot.support {
+                statusTextItem.title = reason.message
+            } else {
+                statusTextItem.title = L10n.tr("Standard brightness", "标准亮度")
+            }
         case .engaging:
             icon = MenuBarIcon.on
             statusTextItem.title = L10n.tr("Starting…", "正在恢复…")

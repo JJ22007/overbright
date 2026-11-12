@@ -7,6 +7,11 @@ import os
 /// reach for ordinary content) and `IOMFBBrightnessLevel` (the backlight now),
 /// both 16.16 fixed-point nits. No window, no gamma table, no EDR.
 ///
+/// Every number comes from the panel itself (`PanelSupport`): standard white,
+/// the peak that bounds every write, and the ceiling as a share of the peak.
+/// A write that macOS does not take is reported as a failure, so the
+/// controller can fall back to the overlay method.
+///
 /// Measured on a 14" MacBook Pro, macOS 27.2: writes are accepted and the
 /// backlight's power follows (6.8 W at 600 nits, 10.8 W at 800, 12.5 W at
 /// 1000). macOS rewrites both values whenever it adjusts the backlight itself
@@ -32,23 +37,25 @@ final class DirectPanelService {
     private(set) var standardNits: Double?
     private(set) var targetNits: Double?
     private(set) var rewrites = 0
-    var ceilingNits: Double = DirectPanel.defaultCeiling
+    /// `maxNits` from the config; `ceilingNits` bounds it by this panel's peak.
+    var configuredCeiling: Double = DirectPanel.defaultCeiling
+    var ceilingNits: Double { PanelSupport.ceiling(configured: configuredCeiling, peakNits: peakNits) }
+    /// The panel's peak, read at `begin`; nothing is ever written above it.
+    private var peakNits: Double?
     private var level: Float = 1
     private var writtenCap: Double?
 
     var isActive: Bool { targetNits != nil }
 
-    /// Standard white before any boost: the current cap. For the scale's top.
-    static func currentStandardNits() -> Double? {
-        let entry = PanelLightService.findBuiltInFramebuffer()
-        guard entry != 0 else { return nil }
-        defer { IOObjectRelease(entry) }
-        return read(entry, "BLNitsCap")
-    }
-
-    /// Starts a boost at `level` (1.0 = standard). False when the panel
-    /// cannot be driven.
-    func begin(level: Float) -> Bool {
+    /// Starts a boost at `level` (1.0 = standard). False when this panel
+    /// cannot be driven: no XDR peak to bound the writes, no way to tell
+    /// standard white, or macOS did not take the first write.
+    func begin(level: Float, readings: PanelReadings) -> Bool {
+        guard PanelSupport.canDriveDirectly(readings),
+              let standard = PanelSupport.standardWhite(readings) else {
+            logger.notice("direct method not available on this panel")
+            return false
+        }
         if framebuffer == 0 { framebuffer = PanelLightService.findBuiltInFramebuffer() }
         guard framebuffer != 0,
               let cap = Self.read(framebuffer, "BLNitsCap"),
@@ -58,7 +65,8 @@ final class DirectPanelService {
             defaults.set(current, forKey: Key.savedLevel)
             defaults.synchronize()
         }
-        standardNits = cap
+        peakNits = readings.peakNits
+        standardNits = standard
         rewrites = 0
         guard apply(level: level) else {
             end()
@@ -112,7 +120,8 @@ final class DirectPanelService {
         }
         guard now - systemChangedAt >= Self.settleTime else { return }
         guard current >= (standardNits ?? 0) * 0.95 else { return }
-        if let writtenCap, abs(cap - writtenCap) > 1, cap > 50, cap < ceilingNits {
+        if let writtenCap, abs(cap - writtenCap) > 1, cap > 50, cap < ceilingNits,
+           cap < (peakNits ?? .infinity) * PanelSupport.edrCapShare {
             // macOS set a new standard white (ambient light); follow it.
             standardNits = cap
             logger.notice("standard white now \(cap, privacy: .public) nits")
@@ -132,6 +141,7 @@ final class DirectPanelService {
         targetNits = nil
         writtenCap = nil
         standardNits = nil
+        peakNits = nil
     }
 
     /// After a crash: writes back values a boost left behind.
@@ -147,7 +157,10 @@ final class DirectPanelService {
     private static func restoreSaved(_ entry: io_registry_entry_t, defaults: UserDefaults) -> Bool {
         guard let cap = defaults.object(forKey: Key.savedCap) as? Double else { return true }
         let level = (defaults.object(forKey: Key.savedLevel) as? Double) ?? cap
-        let ok = set(entry, "IOMFBBrightnessLevel", min(level, cap)) && set(entry, "BLNitsCap", cap)
+        // These are macOS's own values from before the boost, so they bound themselves.
+        let limit = max(PanelLightService.nits(entry, "limit_max_physical_brightness") ?? 0, cap)
+        let ok = set(entry, "IOMFBBrightnessLevel", min(level, cap), limit: limit)
+            && set(entry, "BLNitsCap", cap, limit: limit)
         if ok {
             defaults.removeObject(forKey: Key.savedCap)
             defaults.removeObject(forKey: Key.savedLevel)
@@ -158,10 +171,18 @@ final class DirectPanelService {
 
     @discardableResult
     private func write(_ nits: Double) -> Bool {
-        // Cap first, so the level is never above the cap.
-        let ok = Self.set(framebuffer, "BLNitsCap", nits) && Self.set(framebuffer, "IOMFBBrightnessLevel", nits)
-        if ok { writtenCap = nits }
-        return ok
+        // Cap first, so the level is never above the cap. Without a known XDR
+        // peak there is no bound, and nothing is written.
+        guard let limit = PanelSupport.writeLimit(peakNits: peakNits),
+              Self.set(framebuffer, "BLNitsCap", nits, limit: limit),
+              Self.set(framebuffer, "IOMFBBrightnessLevel", nits, limit: limit) else { return false }
+        // A model or macOS version that ignores the write must not count as boosted.
+        guard let readBack = Self.read(framebuffer, "BLNitsCap"), abs(readBack - nits) <= 2 else {
+            logger.notice("BLNitsCap write of \(nits, privacy: .public) not taken")
+            return false
+        }
+        writtenCap = nits
+        return true
     }
 
     private func startTimer() {
@@ -181,8 +202,9 @@ final class DirectPanelService {
         return nits.isFinite && nits > 0 ? nits : nil
     }
 
-    private static func set(_ entry: io_registry_entry_t, _ key: String, _ nits: Double) -> Bool {
-        guard nits.isFinite, nits > 0, nits <= 1600 else { return false }
+    /// Writes `nits`, never above `limit`.
+    private static func set(_ entry: io_registry_entry_t, _ key: String, _ nits: Double, limit: Double) -> Bool {
+        guard nits.isFinite, nits > 0, nits <= limit else { return false }
         return IORegistryEntrySetCFProperty(
             entry, key as CFString, NSNumber(value: Int64((nits * 65536).rounded()))
         ) == KERN_SUCCESS
