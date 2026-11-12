@@ -413,6 +413,13 @@ expect(DirectPanel.targetNits(standard: 600, level: 2.4, ceiling: 1000) == 1000,
 expect(DirectPanel.targetNits(standard: 720, level: 1, ceiling: 1000) == 720, "100% is standard white")
 expect(DirectPanel.targetNits(standard: 1100, level: 1.2, ceiling: 1000) == 1100, "a ceiling below standard white never dims")
 expect(DirectPanel.targetNits(standard: 0, level: 1.5, ceiling: 1000) == nil, "no standard white, no target")
+
+// overbright report: did the direct boost reach the panel?
+expect(BoostCheck.judge(boosted: false, method: "direct", targetNits: 900, panelNits: 600) == .notBoosted, "report: boost off is not checked")
+expect(BoostCheck.judge(boosted: true, method: "overlay", targetNits: nil, panelNits: 1600) == .notDirect, "report: overlay cannot be judged from the backlight")
+expect(BoostCheck.judge(boosted: true, method: "direct", targetNits: 996, panelNits: 994) == .reached, "report: within 5 nits is reached")
+expect(BoostCheck.judge(boosted: true, method: "direct", targetNits: 943, panelNits: 600) == .missed(panel: 600, target: 943), "report: a dropped boost is reported")
+expect(BoostCheck.judge(boosted: true, method: "direct", targetNits: nil, panelNits: 600) == .unknown, "report: no target, no verdict")
 expect(DirectPanel.maximumLevel(standard: 600, ceiling: 1000) == 1.66, "1000 nits over 600 is 166%")
 expect(DirectPanel.maximumLevel(standard: 720, ceiling: 1000) == 1.38, "brighter surroundings leave less room")
 expect(DirectPanel.maximumLevel(standard: 1000, ceiling: 1000) == nil, "no room above standard white")
@@ -514,12 +521,5 @@ expect(parsed(#"{"boostMethod": "overlay"}"#).configuredBoostMethod == .overlay,
 if failureCount > 0 {
     exit(1)
 }
-
-// overbright report: did the direct boost reach the panel?
-expect(BoostCheck.judge(boosted: false, method: "direct", targetNits: 900, panelNits: 600) == .notBoosted, "report: boost off is not checked")
-expect(BoostCheck.judge(boosted: true, method: "overlay", targetNits: nil, panelNits: 1600) == .notDirect, "report: overlay cannot be judged from the backlight")
-expect(BoostCheck.judge(boosted: true, method: "direct", targetNits: 996, panelNits: 994) == .reached, "report: within 5 nits is reached")
-expect(BoostCheck.judge(boosted: true, method: "direct", targetNits: 943, panelNits: 600) == .missed(panel: 600, target: 943), "report: a dropped boost is reported")
-expect(BoostCheck.judge(boosted: true, method: "direct", targetNits: nil, panelNits: 600) == .unknown, "report: no target, no verdict")
 
 print("ok: \(checkCount)/\(checkCount) logic checks passed")
