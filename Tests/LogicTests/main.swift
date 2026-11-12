@@ -385,15 +385,15 @@ expect(!BuiltInBrightnessScale.backlightDropEndsBoost(previous: 0.5, current: 0.
 
 // MARK: Boost method
 
-expect(BoostMethod.automatic(major: 27, minor: 2) == .overlay, "macOS 27.2 uses the multiply overlay")
-expect(BoostMethod.automatic(major: 28, minor: 0) == .overlay, "later macOS uses the multiply overlay")
+expect(BoostMethod.automatic(major: 27, minor: 2) == .direct, "macOS 27.2 drives the panel directly")
+expect(BoostMethod.automatic(major: 28, minor: 0) == .direct, "later macOS drives the panel directly")
 expect(BoostMethod.automatic(major: 27, minor: 1) == .classic, "macOS 27.1 keeps the classic gamma boost")
 expect(BoostMethod.automatic(major: 15, minor: 6) == .classic, "older macOS keeps the classic gamma boost")
 expect(parsed(#"{"boostMethod": "classic"}"#).resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 27, minorVersion: 2, patchVersion: 1)) == .classic,
        "the config can force the classic method")
 expect(parsed(#"{"boostMethod": "overlay"}"#).resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 15, minorVersion: 0, patchVersion: 0)) == .overlay,
        "the config can force the overlay method")
-expect(parsed("{}").resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 27, minorVersion: 2, patchVersion: 1)) == .overlay,
+expect(parsed("{}").resolvedBoostMethod(os: OperatingSystemVersion(majorVersion: 27, minorVersion: 2, patchVersion: 1)) == .direct,
        "auto picks the overlay on macOS 27.2")
 expect(parsed(#"{"boostMethod": "bright"}"#).warnings.count == 1, "an unknown boost method warns")
 expect(parsed(#"{"boostMethod": "panel"}"#).warnings.count == 1, "the withdrawn panel method warns")
@@ -405,6 +405,22 @@ expect(EDRWhiteCorrection.isAtPeak(panelNits: 1599, peakNits: 1600), "1599 of 16
 expect(EDRWhiteCorrection.isAtPeak(panelNits: 1500, peakNits: 1600), "the last ~70 ms of the ramp count, for the layer's latency")
 expect(!EDRWhiteCorrection.isAtPeak(panelNits: 1300, peakNits: 1600), "a backlight still ramping is not")
 expect(!EDRWhiteCorrection.isAtPeak(panelNits: 722, peakNits: nil), "without a known peak, a standard level is not")
+
+// MARK: Direct panel boost
+
+expect(DirectPanel.targetNits(standard: 600, level: 1.5, ceiling: 1000) == 900, "150% of 600 nits is 900")
+expect(DirectPanel.targetNits(standard: 600, level: 2.4, ceiling: 1000) == 1000, "the ceiling holds")
+expect(DirectPanel.targetNits(standard: 720, level: 1, ceiling: 1000) == 720, "100% is standard white")
+expect(DirectPanel.targetNits(standard: 1100, level: 1.2, ceiling: 1000) == 1100, "a ceiling below standard white never dims")
+expect(DirectPanel.targetNits(standard: 0, level: 1.5, ceiling: 1000) == nil, "no standard white, no target")
+expect(DirectPanel.maximumLevel(standard: 600, ceiling: 1000) == 1.66, "1000 nits over 600 is 166%")
+expect(DirectPanel.maximumLevel(standard: 720, ceiling: 1000) == 1.38, "brighter surroundings leave less room")
+expect(DirectPanel.maximumLevel(standard: 1000, ceiling: 1000) == nil, "no room above standard white")
+expect(Config().maxNits == 1000, "the direct ceiling is 1000 nits by default")
+expect(parsed(#"{"maxNits": 1200}"#).maxNits == 1200, "maxNits can be raised to 1300")
+let tooBright = parsed(#"{"maxNits": 1600}"#)
+expect(tooBright.maxNits == 1300 && tooBright.warnings.count == 1, "maxNits stops at 1300 with a warning")
+expect(parsed(#"{"boostMethod": "direct"}"#).boostMethod == "direct", "direct is a method name")
 
 if failureCount > 0 {
     exit(1)

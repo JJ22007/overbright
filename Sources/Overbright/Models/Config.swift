@@ -45,6 +45,8 @@ struct Config: Equatable {
     /// How the boost brightens the built-in display: "auto" picks by macOS
     /// version, "overlay" or "classic" force one. See `BoostMethod`.
     var boostMethod: String = "auto"
+    /// The direct method's ceiling in nits.
+    var maxNits: Double = DirectPanel.defaultCeiling
     var presets: [Preset] = []
 
     /// Problems found while decoding. Each one names the entry at fault.
@@ -53,7 +55,7 @@ struct Config: Equatable {
     static let knownKeys: Set<String> = [
         "maxLevel", "keyStep", "fineKeyStep", "brightnessKeys",
         "enableOnLaunch", "showPercentage", "language", "presets",
-        "externalDisplays", "externalKeys", "showHUD", "extraDimming", "boostMethod"
+        "externalDisplays", "externalKeys", "showHUD", "extraDimming", "boostMethod", "maxNits"
     ]
 
     enum ParseError: Error, Equatable {
@@ -109,9 +111,10 @@ struct Config: Equatable {
             if let value = (raw as? String)?.lowercased(), options.contains(value) {
                 boostMethod = value
             } else {
-                warnings.append("\"boostMethod\" must be \"auto\", \"overlay\" or \"classic\"; using \"auto\"")
+                warnings.append("\"boostMethod\" must be \"auto\", \"direct\", \"overlay\" or \"classic\"; using \"auto\"")
             }
         }
+        maxNits = number("maxNits", in: dictionary, range: DirectPanel.ceilingRange, default: maxNits)
 
         if let raw = dictionary["language"] {
             if let value = raw as? String, Self.languages.contains(value.lowercased()) {
@@ -180,6 +183,7 @@ struct Config: Equatable {
           "showHUD": \(showHUD),
           "extraDimming": \(extraDimming),
           "boostMethod": \(quote(boostMethod)),
+          "maxNits": \(format(maxNits)),
           "presets": \(presetBlock)
         }
 

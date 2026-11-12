@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         applyConfigToModels()
 
         let boostController = BoostController()
+        boostController.directCeiling = ConfigStore.shared.config.maxNits
         boostController.method = ConfigStore.shared.config.resolvedBoostMethod()
         boostController.onCeilingChange = { [weak self] in self?.statusController?.rebuildMenu() }
         self.boostController = boostController
@@ -115,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The config file was saved. Everything it controls is applied here.
     private func configDidChange() {
         applyConfigToModels()
+        boostController?.directCeiling = ConfigStore.shared.config.maxNits
         boostController?.method = ConfigStore.shared.config.resolvedBoostMethod()
         externalDisplays?.isEnabled = ConfigStore.shared.config.externalDisplays
         externalDisplays?.extraDimming = ConfigStore.shared.config.extraDimming

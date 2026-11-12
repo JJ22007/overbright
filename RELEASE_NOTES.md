@@ -7,6 +7,10 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 - Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
 - To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
+## 2.5
+
+- **Boost without a layer on macOS 27.2: no more white screen.** The new default method, `direct`, drives the built-in panel's backlight past standard white itself (the framebuffer's nits cap and level) instead of covering the screen with a multiplying HDR layer. The layer flashed white in Spaces and Mission Control transitions, a macOS behaviour other boost apps share; with nothing drawn on screen, switching desktops looks as usual and the screen no longer dims while switching. The top is 1000 nits (`maxNits`, up to 1300), which the panel holds across the whole screen: 166% of a 600-nit standard white, less in bright surroundings where macOS raises standard white. The previous values are written back when the boost ends, when you lower the brightness, and at the next launch after a crash. `"boostMethod": "overlay"` keeps the 2.4 layer.
+
 ## 2.4
 
 - **As bright as the panel goes.** With the overlay method (macOS 27.2) the ceiling is no longer a fixed 160%: Overbright measures the panel's EDR headroom the first time the boost reaches the peak and remembers it. On a 14" MacBook Pro that is 244% (2.67× headroom less the 9% Overbright adds back for macOS's dimmer white); other models get their own number. `"maxLevel"` is now `"auto"` by default, or a number up to 400 for a lower ceiling. `status --json` adds `panelMaxLevel`.

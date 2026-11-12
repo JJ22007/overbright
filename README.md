@@ -119,7 +119,8 @@ The config lives at `~/.config/overbright/config.json`. Open it from the menu wi
 | `externalDisplays` | `true` | Show external displays in the menu and control their brightness. |
 | `externalKeys` | `true` | Control+F1/F2 adjust external displays. Needs `brightnessKeys` and the Accessibility permission. |
 | `showHUD` | `true` | Show a brightness indicator on an external display while it changes. |
-| `boostMethod` | `"auto"` | How the boost brightens the built-in display: `"overlay"` (macOS 27.2 and later) or `"classic"` (earlier). `"auto"` picks by macOS version; force one only if the boost looks wrong. See [How it works](#how-it-works). |
+| `maxNits` | `1000` | Ceiling of the direct method, in nits, from 700 to 1300. 1000 is what the panel holds across the whole screen; above it the panel's own thermal limit pulls the backlight down within seconds. |
+| `boostMethod` | `"auto"` | How the boost brightens the built-in display: `"direct"` (macOS 27.2 and later), `"overlay"` or `"classic"` (earlier). `"auto"` picks by macOS version; force one only if the boost looks wrong. See [How it works](#how-it-works). |
 | `extraDimming` | `true` | Let external displays go below 0%, down to −90%, by darkening the picture once the backlight is at its minimum. |
 | `presets` | `[]` | Named levels: `name` and `level` (100 to 400). They appear in the menu and work with `overbright preset`. |
 
@@ -176,7 +177,7 @@ overbright status --json
   "presets" : [],
   "scale" : 125,
   "scaleTop" : 244,
-  "boostMethod" : "overlay",
+  "boostMethod" : "direct",
   "state" : "on",
   "supported" : true,
   "version" : "2.0"
@@ -237,6 +238,8 @@ Prefer to do it by hand? Each file has one job:
 ## How it works
 
 macOS gives an XDR display brightness "headroom" above standard white only while something on screen is HDR. Overbright keeps a tiny, invisible HDR layer on the built-in display so that headroom opens. macOS then drives the backlight up to its peak (1600 nits on a MacBook Pro) and normally scales ordinary content back down so it looks unchanged. Overbright lets ordinary white take part of that light. How depends on the macOS version (`boostMethod`):
+
+- **direct** (macOS 27.2 and later, the default). No layer, no gamma table, no HDR: Overbright drives the panel's backlight past standard white itself, through the framebuffer's nits cap and level. 150% asks for 1.5 × standard white (600 nits, more in bright surroundings), up to `maxNits` (1000). macOS rewrites the backlight when it adjusts it (ambient light), and Overbright puts the boost back within a quarter of a second; when you lower the brightness yourself, the boost ends. The values from before the boost are written back when it ends and after a crash. Nothing is drawn on screen, so Spaces and Mission Control look as usual. Measured on a 14" MacBook Pro: 6.8 W of backlight power at 100%, 10.7 W at 166% (996 nits), steady for a minute.
 
 - **overlay** (macOS 27.2 and later). The gamma table no longer changes the light the panel emits, so Overbright puts a full-screen HDR layer over the built-in display that multiplies everything under it by the boost level: 160% multiplies by 1.6. Black stays black. The layer is invisible to screenshots and recordings and never takes clicks. In HDR mode macOS draws ordinary white about 9% dimmer once the backlight reaches its peak, so the layer adds that back as the backlight arrives; a percentage is therefore relative to the real standard white. No gamma table is written.
 - **classic** (earlier macOS). macOS scales ordinary content after the gamma table, so a table above 1 lifts white into the headroom: 160% is a table endpoint of about 1.6, capped by the headroom macOS reports.

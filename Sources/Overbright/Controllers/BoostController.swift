@@ -23,6 +23,25 @@ final class BoostController {
     private let edrTrigger = EDRTriggerService()
     private let nativeBrightness = NativeBrightnessService()
     private let overlay = EDROverlayService()
+    private let direct = DirectPanelService()
+
+    /// The direct method's ceiling in nits (`maxNits`).
+    var directCeiling: Double = DirectPanel.defaultCeiling {
+        didSet {
+            direct.ceilingNits = directCeiling
+            loadPanelMaximum()
+            if wantedActive, state == .active, method == .direct { applyCurrentLevel() }
+        }
+    }
+
+    var directDiagnostics: [String: Any] {
+        [
+            "standardNits": direct.standardNits.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
+            "targetNits": direct.targetNits.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
+            "ceilingNits": directCeiling,
+            "rewrites": direct.rewrites,
+        ]
+    }
     private let defaults = UserDefaults.standard
     private let logger = Logger(subsystem: AppInfo.bundleID, category: "Recovery")
 
@@ -56,9 +75,16 @@ final class BoostController {
     /// method stays at its calibrated 160%.
     private func loadPanelMaximum() {
         let stored = defaults.object(forKey: DefaultsKey.panelMaximum) as? NSNumber
-        BoostLevel.maximum = method == .overlay
-            ? max(stored?.floatValue ?? BoostLevel.classicMaximum, BoostLevel.classicMaximum)
-            : BoostLevel.classicMaximum
+        switch method {
+        case .overlay:
+            BoostLevel.maximum = max(stored?.floatValue ?? BoostLevel.classicMaximum, BoostLevel.classicMaximum)
+        case .direct:
+            let standard = direct.standardNits ?? DirectPanelService.currentStandardNits() ?? 600
+            BoostLevel.maximum = DirectPanel.maximumLevel(standard: standard, ceiling: directCeiling)
+                ?? BoostLevel.minimum
+        case .classic:
+            BoostLevel.maximum = BoostLevel.classicMaximum
+        }
         // A stored level above the old ceiling was clamped at launch.
         if let wanted = (defaults.object(forKey: DefaultsKey.level) as? NSNumber)?.floatValue,
            abs(BoostLevel(wanted).factor - level.factor) > 0.0001 {
@@ -90,6 +116,8 @@ final class BoostController {
     init() {
         let stored = defaults.object(forKey: DefaultsKey.level) as? NSNumber
         level = BoostLevel(stored?.floatValue ?? BoostLevel.defaultValue)
+        // A direct boost a crash left behind is undone before anything else.
+        DirectPanelService.recoverIfNeeded()
         overlay.onHeadroom = { [weak self] headroom in
             MainActor.assumeIsolated { self?.panelHeadroomMeasured(headroom) }
         }
@@ -216,7 +244,7 @@ final class BoostController {
 
         // The overlay method never writes a gamma table: on macOS 27.2 a table
         // installed when EDR starts makes white jump to the full backlight.
-        guard effectiveMethod == .overlay || gamma.captureBaseline(displayID: displayID) else {
+        guard effectiveMethod != .classic || gamma.captureBaseline(displayID: displayID) else {
             failActivation(L10n.tr("Could not read the display gamma table", "无法读取屏幕颜色表"))
             return
         }
@@ -236,12 +264,33 @@ final class BoostController {
     }
 
     private func startEDRLayer(on screen: NSScreen) -> Bool {
-        effectiveMethod == .overlay ? overlay.start(on: screen) : edrTrigger.start(on: screen)
+        switch effectiveMethod {
+        case .overlay: return overlay.start(on: screen)
+        case .direct:
+            guard direct.begin(level: level.factor) else { return false }
+            let before = BoostLevel.maximum
+            loadPanelMaximum()
+            if BoostLevel.maximum != before { onCeilingChange?() }
+            return true
+        case .classic: return edrTrigger.start(on: screen)
+        }
     }
 
     private func stopEDRLayers() {
         overlay.stop()
         edrTrigger.stop()
+        if direct.isActive {
+            direct.end()
+            // The restored level is the one from before the boost; have macOS
+            // recompute the backlight for the brightness it has now.
+            if let id = DisplayLookup.builtInScreen?.overbrightID,
+               let current = nativeBrightness.read(displayID: id) {
+                _ = nativeBrightness.write(max(current - 0.001, 0), displayID: id)
+                _ = nativeBrightness.write(current, displayID: id)
+            }
+        } else {
+            direct.end()
+        }
     }
 
     @discardableResult
@@ -457,7 +506,7 @@ final class BoostController {
         let currentEDR = screen.maximumExtendedDynamicRangeColorComponentValue
         // The overlay is limited by the headroom as the backlight ramps up, so
         // it can take over at once instead of waiting for the ramp to finish.
-        if backlightReady && (currentEDR > 1.05 || effectiveMethod == .overlay) {
+        if backlightReady && (currentEDR > 1.05 || effectiveMethod != .classic) {
             applyCurrentLevel()
             return
         }
@@ -484,9 +533,12 @@ final class BoostController {
         }
 
         guard verifyNativeBrightnessForBoost(displayID: displayID) else { return }
-        let applied = effectiveMethod == .overlay
-            ? overlay.show(level: level.factor)
-            : gamma.apply(factor: targetFactor(for: screen))
+        let applied: Bool
+        switch effectiveMethod {
+        case .overlay: applied = overlay.show(level: level.factor)
+        case .direct: applied = direct.apply(level: level.factor)
+        case .classic: applied = gamma.apply(factor: targetFactor(for: screen))
+        }
 
         guard applied else {
             failActivation(L10n.tr("Could not apply the boost", "无法应用屏幕增亮"))
@@ -553,7 +605,21 @@ final class BoostController {
         integrityTimer = timer
     }
 
+    /// The direct method's top follows standard white, which macOS raises in
+    /// bright surroundings (600 to 720 nits measured): 166% or 138% under a
+    /// 1000-nit ceiling.
+    private func refreshDirectMaximum() {
+        guard method == .direct else { return }
+        let before = BoostLevel.maximum
+        loadPanelMaximum()
+        if abs(BoostLevel.maximum - before) >= 0.01 {
+            onCeilingChange?()
+            publishSnapshot()
+        }
+    }
+
     private func performIntegrityCheck() {
+        refreshDirectMaximum()
         guard wantedActive else {
             retryPendingRecovery()
             return
@@ -570,6 +636,15 @@ final class BoostController {
         }
 
         guard verifyNativeBrightnessForBoost(displayID: displayID) else { return }
+
+        if effectiveMethod == .direct {
+            if !direct.isActive, !direct.begin(level: level.factor) {
+                failActivation(L10n.tr("Could not drive the panel backlight", "无法控制屏幕背光"))
+                return
+            }
+            publishSnapshot()
+            return
+        }
 
         if effectiveMethod == .overlay {
             if overlay.isShowing {
@@ -788,6 +863,7 @@ final class BoostController {
     @discardableResult
     private func recoverInterruptedSession() -> Bool {
         guard DisplayLookup.builtInScreen != nil else { return false }
+        DirectPanelService.recoverIfNeeded()
 
         if !gammaRecoveryHandled {
             GammaTableService.restoreColorSyncDefaults()
