@@ -7,6 +7,12 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 - Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
 - To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
+## 2.6.1
+
+- **Fixed: the boost could drop out when the room got darker.** With the direct method, when ambient light fell macOS lowered standard white (720 to 600 nits on a 14" MacBook Pro) and Overbright took the lower backlight for you dimming the screen. The boost was not put back, while the menu and `status` still said it was on. Overbright now follows the new standard white and keeps boosting.
+- **`overbright report`.** One read-only command that prints a Markdown report for a model report issue: model, macOS, method, standard white, peak, the backlight now, the top of the scale, and whether the boost actually reached the panel, with the full `status --json` folded underneath. It changes nothing on screen. If you have a MacBook Pro other than a 14" M6, please turn the boost on at the top of the scale, run it, and [send the output](https://github.com/JJ22007/overbright/issues/new?template=model-report.md).
+- **README and AGENTS.md describe the direct method first**, mark what only applies to the overlay and classic methods, and state the private-interface risk. With the direct method there is no dim period after the boost ends: the backlight is back at standard white within 0.1 s (measured readings).
+
 ## 2.6
 
 - **More MacBook Pros.** Nothing is tied to the 14" MacBook Pro any more. Standard white, the peak, the ceiling and the scale's top are read from each panel, so a 16" or an M1/M2 model gets its own numbers (200% on M1 and M2, whose standard white is 500 nits; 166% on M3 and later). Every write is bounded by the panel's own peak. See "Supported Macs" in the README for what was measured and what is only expected to work, and please report your model.
