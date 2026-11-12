@@ -515,4 +515,18 @@ if failureCount > 0 {
     exit(1)
 }
 
+// Direct method: what to do once macOS's own values have settled.
+let darker = DirectPanel.settled(cap: 600, level: 600, writtenCap: 943, standard: 720, ceiling: 1000, peak: 1600)
+expect(darker == .init(reapply: true, newStandard: 600), "a darker room (720 to 600) is followed, not taken for dimming")
+let brighter = DirectPanel.settled(cap: 720, level: 720, writtenCap: 786, standard: 600, ceiling: 1000, peak: 1600)
+expect(brighter == .init(reapply: true, newStandard: 720), "a brighter room (600 to 720) is followed")
+let dimmed = DirectPanel.settled(cap: 786, level: 400, writtenCap: 786, standard: 600, ceiling: 1000, peak: 1600)
+expect(!dimmed.reapply, "a backlight below standard white is left to the controller")
+let dimmedNewCap = DirectPanel.settled(cap: 600, level: 300, writtenCap: 943, standard: 720, ceiling: 1000, peak: 1600)
+expect(!dimmedNewCap.reapply, "dimming under a new cap is still dimming")
+let sameCap = DirectPanel.settled(cap: 786, level: 600, writtenCap: 786, standard: 600, ceiling: 1000, peak: 1600)
+expect(sameCap == .init(reapply: true, newStandard: nil), "macOS rewrote the level only: put the boost back")
+let hdrCap = DirectPanel.settled(cap: 1600, level: 1600, writtenCap: 786, standard: 600, ceiling: 1000, peak: 1600)
+expect(hdrCap.newStandard == nil, "an HDR cap at the peak is not a new standard white")
+
 print("ok: \(checkCount)/\(checkCount) logic checks passed")

@@ -119,12 +119,12 @@ final class DirectPanelService {
             return
         }
         guard now - systemChangedAt >= Self.settleTime else { return }
-        guard current >= (standardNits ?? 0) * 0.95 else { return }
-        if let writtenCap, abs(cap - writtenCap) > 1, cap > 50, cap < ceilingNits,
-           cap < (peakNits ?? .infinity) * PanelSupport.edrCapShare {
-            // macOS set a new standard white (ambient light); follow it.
-            standardNits = cap
-            logger.notice("standard white now \(cap, privacy: .public) nits")
+        let decision = DirectPanel.settled(cap: cap, level: current, writtenCap: writtenCap,
+                                           standard: standardNits, ceiling: ceilingNits, peak: peakNits)
+        guard decision.reapply else { return }
+        if let newStandard = decision.newStandard {
+            standardNits = newStandard
+            logger.notice("standard white now \(newStandard, privacy: .public) nits")
         }
         apply(level: level)
         rewrites += 1

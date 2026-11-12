@@ -124,6 +124,30 @@ enum DirectPanel {
         let level = (ceiling / standard * 100).rounded(.down) / 100
         return level > 1.05 ? min(Float(level), BoostLevel.absoluteMaximum) : nil
     }
+
+    /// What to do once macOS has replaced the boost and its values have
+    /// settled. A new cap at full backlight is macOS choosing a new standard
+    /// white (ambient light, up or down): follow it and put the boost back.
+    /// A backlight below standard white is the user dimming: leave it to the
+    /// controller. The new standard is decided before that comparison, so a
+    /// darker room (720 to 600 nits) is not mistaken for dimming.
+    struct Settled: Equatable {
+        var reapply: Bool
+        var newStandard: Double?
+    }
+
+    static func settled(cap: Double, level: Double, writtenCap: Double?, standard: Double?,
+                        ceiling: Double, peak: Double?) -> Settled {
+        var effectiveStandard = standard ?? 0
+        var newStandard: Double?
+        if let writtenCap, abs(cap - writtenCap) > 1, cap > 50, cap < ceiling,
+           cap < (peak ?? .infinity) * PanelSupport.edrCapShare {
+            newStandard = cap
+            effectiveStandard = cap
+        }
+        guard level >= effectiveStandard * 0.95 else { return Settled(reapply: false, newStandard: nil) }
+        return Settled(reapply: true, newStandard: newStandard)
+    }
 }
 
 /// macOS 27.2 draws ordinary white about 9% dimmer once the backlight has
