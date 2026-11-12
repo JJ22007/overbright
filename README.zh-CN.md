@@ -40,7 +40,7 @@ Liquid Retina XDR 屏幕平时只在播放 HDR 视频时才会用到额外的亮
 | MacBook Air、13 英寸 MacBook Pro、Intel MacBook Pro | | **不支持。** 没有 XDR 面板。菜单里会写明，不会对屏幕写入任何东西。 |
 | 外接显示器、合盖 | | **不增亮。** 外接显示器保持自己的 0–100% 亮度。 |
 
-"应该能用"的意思是：这些代码路径用各型号的读数写了测试（`Tests/LogicTests`），并没有人真的看过屏幕。如果你有这些机型，不管能不能用，都请[开一个 issue](https://github.com/JJ22007/overbright/issues/new?template=model-report.md)，附上 `overbright status --json` 的输出。
+"应该能用"的意思是：这些代码路径用各型号的读数写了测试（`Tests/LogicTests`），并没有人真的看过屏幕。如果你有这些机型，不管能不能用，都请把增亮开到刻度最高，运行 `overbright report`，把输出贴进[机型报告](https://github.com/JJ22007/overbright/issues/new?template=model-report.md)。这份报告读取面板数字并核对增亮有没有真的写进面板，不会改动屏幕。
 
 各型号不一样的数字都来自面板本身。读不到或者看起来不对的时候，Overbright 会退回到更保守的做法，而不是去猜：
 
@@ -177,6 +177,7 @@ overbright displays          # 2  DELL P2723DE  ddc  100%
 overbright display dell 60   # 按名字、编号或 all 指定副屏
 overbright display all down
 overbright display dell -40  # 背光为 0，画面压暗到 60%
+overbright report            # 生成机型报告（Markdown），可直接贴进 issue
 overbright status --json
 ```
 
