@@ -55,3 +55,20 @@ func checkRoom(cameraFile: String, setPatch: (Double) -> Void, pump: (Double) ->
     }
     return RoomCheck(white: average(whites), black: average(blacks))
 }
+
+/// Puts the boost back as it was: on or off, the scale, and the level the menu
+/// remembers for the next "on" (a test that sets a level changes it). `run`
+/// runs the overbright command.
+func restoreBoost(state: String, scale: Double, level: Double?, run: ([String]) -> Void) {
+    if let level, level.isFinite {
+        // "set" changes the remembered level only while the boost is on.
+        run(["on"])
+        run(["set", String(format: "%.2f", level)])
+    }
+    if state == "on" || scale <= 100 {
+        run(["set", String(format: "%.2f", scale)])
+    } else {
+        run(["off"])
+    }
+    if state != "on" { run(["off"]) }
+}

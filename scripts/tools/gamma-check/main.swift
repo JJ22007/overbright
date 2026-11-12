@@ -64,6 +64,7 @@ guard let startScale = before["scale"] as? Double else {
     FileHandle.standardError.write(Data("gamma-check: Overbright is not running (scripts/install.sh)\n".utf8)); exit(1)
 }
 let startState = before["state"] as? String ?? "off"
+let startLevel = before["level"] as? Double
 let display = sampler.displayID
 
 // MARK: What has to be put back
@@ -146,11 +147,7 @@ func restoreAll() {
     restoreTable()
     if configChanged { overbright(["off"]); setConfig(classic: false); pump(2) }
     window.orderOut(nil)
-    if startState == "on" || startScale <= 100 {
-        overbright(["set", String(format: "%.2f", startScale)])
-    } else {
-        overbright(["off"])
-    }
+    restoreBoost(state: startState, scale: startScale, level: startLevel) { overbright($0) }
     if camera.isRunning { camera.terminate() }
 }
 func fail(_ message: String) -> Never {
