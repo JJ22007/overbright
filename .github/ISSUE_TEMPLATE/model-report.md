@@ -11,14 +11,8 @@ labels: model-report
 
 **Does the boost work?** (yes / no / partly, and what you saw)
 
-**Output of `overbright status --json`** with the boost on at its top (it lists your model, panel readings and the method in use; nothing personal):
+**Output of `overbright report`**, run with the boost on at the top of the scale. It is a ready-made table of your model, macOS version, panel readings and whether the boost reached the panel; it changes nothing on screen and contains nothing personal. Paste it as it is:
 
-```json
+<!-- paste here -->
 
-```
-
-**Output of `bash scripts/brightness-log.sh --once`** (only if you built from source):
-
-```
-
-```
+**Anything you saw on screen** (white flashes, flicker, the boost dropping out, after sleep or with the lid closed), or "nothing unusual":

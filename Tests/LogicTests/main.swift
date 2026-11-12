@@ -515,4 +515,11 @@ if failureCount > 0 {
     exit(1)
 }
 
+// overbright report: did the direct boost reach the panel?
+expect(BoostCheck.judge(boosted: false, method: "direct", targetNits: 900, panelNits: 600) == .notBoosted, "report: boost off is not checked")
+expect(BoostCheck.judge(boosted: true, method: "overlay", targetNits: nil, panelNits: 1600) == .notDirect, "report: overlay cannot be judged from the backlight")
+expect(BoostCheck.judge(boosted: true, method: "direct", targetNits: 996, panelNits: 994) == .reached, "report: within 5 nits is reached")
+expect(BoostCheck.judge(boosted: true, method: "direct", targetNits: 943, panelNits: 600) == .missed(panel: 600, target: 943), "report: a dropped boost is reported")
+expect(BoostCheck.judge(boosted: true, method: "direct", targetNits: nil, panelNits: 600) == .unknown, "report: no target, no verdict")
+
 print("ok: \(checkCount)/\(checkCount) logic checks passed")

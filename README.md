@@ -44,7 +44,7 @@ Every 14" and 16" MacBook Pro with a Liquid Retina XDR display, M1 Pro/Max (2021
 | MacBook Air, 13" MacBook Pro, Intel MacBook Pro | | **Not supported.** No XDR panel. The menu says so, and nothing is written to the display. |
 | External displays, lid closed | | **No boost.** External displays keep their own 0–100% brightness. |
 
-"Expected to work" means the code paths are covered by tests with each model's readings (`Tests/LogicTests`), not that anyone has looked at the screen. If you have one of these Macs, please [open an issue](https://github.com/JJ22007/overbright/issues/new?template=model-report.md) with the output of `overbright status --json`, whether it works or not.
+"Expected to work" means the code paths are covered by tests with each model's readings (`Tests/LogicTests`), not that anyone has looked at the screen. If you have one of these Macs, please turn the boost on at the top of the scale, run `overbright report` and paste its output into [a model report](https://github.com/JJ22007/overbright/issues/new?template=model-report.md), whether it works or not. The report reads your panel and checks that the boost reached it; it changes nothing.
 
 Every number that differs between models comes from the panel. If anything is missing or looks wrong, Overbright falls back instead of guessing:
 
@@ -181,6 +181,7 @@ overbright displays          # 2  DELL P2723DE  ddc  100%
 overbright display dell 60   # external display by name, id or "all"
 overbright display all down
 overbright display dell -40  # backlight at 0, picture darkened to 60%
+overbright report            # a Markdown report for a model report issue
 overbright status --json
 ```
 

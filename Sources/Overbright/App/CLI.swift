@@ -21,7 +21,7 @@ import AppKit
 enum CLI {
     static let commands: Set<String> = [
         "status", "on", "off", "toggle", "set", "up", "down", "preset", "presets",
-        "displays", "display", "key",
+        "displays", "display", "key", "report",
         "config", "check", "version", "help", "--help", "-h", "--version", "--check"
     ]
 
@@ -46,6 +46,9 @@ enum CLI {
       overbright display <name|all> <percent|up|down>
                                      set an external display, 0-100; below 0
                                      darkens past the backlight's minimum
+      overbright report              a Markdown report of this Mac's panel and
+                                     the boost, to paste into a model report
+                                     issue; it changes nothing
       overbright config              print the config file path
       overbright check [file]        validate a config file (default: yours)
       overbright version
@@ -216,6 +219,9 @@ final class CommandServer {
         switch command {
         case "status":
             finish(0, statusLine())
+
+        case "report":
+            finish(0, reportText())
 
         case "presets":
             if config.presets.isEmpty {
@@ -460,6 +466,67 @@ final class CommandServer {
             withJSONObject: status, options: [.prettyPrinted, .sortedKeys]
         )
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
+    /// Everything a model report needs, read-only.
+    private func reportText() -> String {
+        let snapshot = boostController.snapshot
+        let readings = PanelLightService.readings()
+        let framebuffer = PanelLightService.findBuiltInFramebuffer()
+        let panelNits = framebuffer == 0 ? nil : PanelLightService.nits(framebuffer, "IOMFBBrightnessLevel")
+        if framebuffer != 0 { IOObjectRelease(framebuffer) }
+        let direct = boostController.directDiagnostics
+        let target = direct["targetNits"] as? Double
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let boosted = stateName == "on" && snapshot.level.percentage > 100
+        func nits(_ value: Double?) -> String { value.map { "\(Int($0.rounded())) nits" } ?? "unknown" }
+
+        let check: String
+        switch BoostCheck.judge(boosted: boosted, method: boostController.effectiveMethod.rawValue,
+                                targetNits: target, panelNits: panelNits) {
+        case .notBoosted:
+            check = "not checked: turn the boost on at the top of the scale, then run this again"
+        case .notDirect:
+            check = "not checked: the \(boostController.effectiveMethod.rawValue) method draws on screen; say what you see"
+        case .reached:
+            check = "yes: the panel is at \(nits(panelNits)), as asked"
+        case let .missed(panel, wanted):
+            check = "NO: asked for \(nits(wanted)), the panel is at \(nits(panel))"
+        case .unknown:
+            check = "unknown: no reading"
+        }
+        let supported: String = {
+            if case let .unsupported(reason) = snapshot.support { return "no (\(reason.code))" }
+            return "yes"
+        }()
+        let lines = [
+            "### Overbright model report",
+            "",
+            "| | |",
+            "|---|---|",
+            "| Model | \(PanelLightService.modelIdentifier ?? "unknown") |",
+            "| macOS | \(os.majorVersion).\(os.minorVersion).\(os.patchVersion) |",
+            "| Overbright | \(AppInfo.version) |",
+            "| Supported | \(supported) |",
+            "| Method | \(boostController.effectiveMethod.rawValue) |",
+            "| Standard white | \(nits(readings.systemStandardNits)) |",
+            "| Peak | \(nits(readings.peakNits)) |",
+            "| Backlight cap now | \(nits(readings.capNits)) |",
+            "| Backlight now | \(nits(panelNits)) |",
+            "| HDR headroom now | \(String(format: "%.2f", snapshot.currentEDRHeadroom)) |",
+            "| Top of the scale | \(Int(boostController.scaleTop.rounded()))% |",
+            "| Boost | \(statusLine()) |",
+            "| Boost reached the panel | \(check) |",
+            "",
+            "<details><summary>status --json</summary>",
+            "",
+            "```json",
+            statusJSON(message: nil),
+            "```",
+            "",
+            "</details>"
+        ]
+        return lines.joined(separator: "\n")
     }
 
     private static func plain(_ value: Double) -> String {

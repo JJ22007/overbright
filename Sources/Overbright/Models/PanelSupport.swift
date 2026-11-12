@@ -113,3 +113,23 @@ enum PanelSupport {
         return list
     }
 }
+
+/// The one judgement `overbright report` makes: whether the direct boost the
+/// app asked for is what the panel is driving now. Read-only; it never
+/// changes the display.
+enum BoostCheck: Equatable {
+    case notBoosted
+    case notDirect
+    case reached
+    case missed(panel: Double, target: Double)
+    case unknown
+
+    static let tolerance: Double = 5
+
+    static func judge(boosted: Bool, method: String, targetNits: Double?, panelNits: Double?) -> BoostCheck {
+        guard boosted else { return .notBoosted }
+        guard method == "direct" else { return .notDirect }
+        guard let targetNits, let panelNits, targetNits.isFinite, panelNits.isFinite else { return .unknown }
+        return abs(panelNits - targetNits) <= tolerance ? .reached : .missed(panel: panelNits, target: targetNits)
+    }
+}
