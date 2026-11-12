@@ -13,7 +13,7 @@
   <a href="#build-your-own">Build your own</a>
 </p>
 
-Overbright opens the extra brightness that a Liquid Retina XDR display normally keeps for HDR video, and lets you use it for everything: up to what the panel holds across the whole screen (166% of standard brightness on M3 and later, 200% on M1 and M2, worked out on each Mac from what its panel reports), from the menu bar, from F1/F2, or from a command. It is about 4,000 lines of Swift with no dependencies and no Xcode project. Settings sit in one JSON file, and anything the file can't do is a short edit away, by you or by your AI coding agent.
+Overbright opens the extra brightness that a Liquid Retina XDR display normally keeps for HDR video, and lets you use it for everything: up to what the panel holds across the whole screen (166% of standard brightness on M3 and later, 200% on M1 and M2, worked out on each Mac from what its panel reports), from the menu bar, from F1/F2, or from a command. It is plain Swift with no dependencies and no Xcode project. Settings sit in one JSON file, and anything the file can't do is a short edit away, by you or by your AI coding agent.
 
 ## Features
 
@@ -110,8 +110,8 @@ Handling the keys needs the Accessibility permission, because Overbright has to 
 | You press | What happens |
 |---|---|
 | F1/F2 below 100% | The backlight moves one step, like macOS's own keys. |
-| F2 at 100% | The boost starts. The very first step from an idle display takes about 0.3 s, because macOS first ramps the backlight up to its peak; every later step is immediate. |
-| F1 at 106% | Back to 100% at once. macOS keeps the backlight at its peak for about 15 seconds afterwards; Overbright holds the picture at standard brightness until it has come down. |
+| F2 at 100% | The boost starts. With `overlay` and `classic`, the very first step from an idle display takes about 0.3 s, because macOS first ramps the backlight up to its peak; every later step is immediate. `direct` has no such ramp. |
+| F1 at 106% | Back to 100% at once. With `overlay` and `classic`, macOS keeps the backlight at its peak for about 15 seconds afterwards; Overbright holds the picture at standard brightness until it has come down. |
 | Option+F1/F2 | Opens Displays settings, as usual. |
 
 ## Make it yours
@@ -186,27 +186,28 @@ overbright status --json
 
 ```json
 {
+  "boostMethod" : "direct",
   "brightnessKeys" : "on",
   "configProblems" : [],
+  "direct" : { "ceilingNits" : 1000, "rewrites" : 0, "standardNits" : 600, "targetNits" : 900 },
+  "edrHeadroom" : 1,
   "externalDisplays" : [
     { "control" : "ddc", "id" : 2, "level" : 100, "minimum" : -90, "name" : "DELL P2723DE" }
   ],
-  "edrHeadroom" : 1.26,
-  "level" : 125,
+  "level" : 150,
   "maxLevel" : "auto",
-  "panelMaxLevel" : 244,
-  "potentialEdrHeadroom" : 16,
+  "panel" : { "model" : "Mac18,1", "peakNits" : 1600, "standardNits" : 600, "directPossible" : true },
+  "panelMaxLevel" : 166,
   "presets" : [],
-  "scale" : 125,
-  "scaleTop" : 244,
-  "boostMethod" : "direct",
+  "scale" : 150,
+  "scaleTop" : 166,
   "state" : "on",
   "supported" : true,
-  "version" : "2.0"
+  "version" : "2.6"
 }
 ```
 
-The app must be running; the command talks to it and waits for the display to actually change before it answers. `state` is `off`, `engaging`, `on` or `unavailable`. Add `--json` to any command to get the status object back.
+Abridged: the real object has a few more fields, mostly diagnostics. The app must be running; the command talks to it and waits for the display to actually change before it answers. `state` is `off`, `engaging`, `on` or `unavailable`. Add `--json` to any command to get the status object back.
 
 | Exit code | Meaning |
 |---|---|
@@ -255,29 +256,31 @@ Prefer to do it by hand? Each file has one job:
 | [`Support/L10n.swift`](Sources/Overbright/Support/L10n.swift) | English and Chinese text | add a language |
 | [`App/AppDelegate.swift`](Sources/Overbright/App/AppDelegate.swift) | Start-up, sleep/wake, applying the config | react to a system event |
 | [`Controllers/BoostController.swift`](Sources/Overbright/Controllers/BoostController.swift) | The state machine that applies and restores the boost | rarely, and carefully |
-| [`Services/`](Sources/Overbright/Services) | Gamma table, EDR layer, backlight, key tap | rarely |
+| [`Services/`](Sources/Overbright/Services) | Direct panel writes, gamma table, HDR layers, backlight, key tap | rarely |
 
 ## How it works
 
-macOS gives an XDR display brightness "headroom" above standard white only while something on screen is HDR. Overbright keeps a tiny, invisible HDR layer on the built-in display so that headroom opens. macOS then drives the backlight up to its peak (1600 nits on a MacBook Pro) and normally scales ordinary content back down so it looks unchanged. Overbright lets ordinary white take part of that light. How depends on the macOS version (`boostMethod`):
+How Overbright brightens the built-in display depends on the macOS version (`boostMethod`).
 
-- **direct** (macOS 27.2 and later, the default). No layer, no gamma table, no HDR: Overbright drives the panel's backlight past standard white itself, through the framebuffer's nits cap and level. 150% asks for 1.5 × standard white (600 nits, more in bright surroundings), up to `maxNits` (1000). macOS rewrites the backlight when it adjusts it (ambient light, automatic brightness); Overbright lets that adjustment finish, then puts the boost back about a second later; when you lower the brightness yourself, the boost ends. The values from before the boost are written back when it ends and after a crash. Nothing is drawn on screen, so Spaces and Mission Control look as usual. Measured on a 14" MacBook Pro: 6.8 W of backlight power at 100%, 10.7 W at 166% (996 nits), steady for a minute.
+- **direct** (macOS 27.2 and later, the default). Overbright drives the panel's backlight past standard white itself, by writing two values of the built-in display's framebuffer: its nits cap (`BLNitsCap`) and its level (`IOMFBBrightnessLevel`). No layer, no gamma table, no HDR mode: nothing is drawn on screen, so Spaces and Mission Control are left alone. 150% asks for 1.5 × standard white (600 nits, more in bright surroundings), up to `maxNits` (1000). Every write is read back; if macOS does not take it, Overbright falls back to `overlay`. macOS rewrites the backlight when it adjusts it (ambient light, automatic brightness); Overbright lets that adjustment finish, then puts the boost back about a second later. When you lower the brightness yourself, the boost ends. The values from before the boost are written back when it ends and at the next launch after a crash. Measured on a 14" MacBook Pro: 6.8 W of backlight power at 100%, 10.7 W at 166% (996 nits), steady for a minute.
 
-- **overlay** (macOS 27.2 and later). The gamma table no longer changes the light the panel emits, so Overbright puts a full-screen HDR layer over the built-in display that multiplies everything under it by the boost level: 160% multiplies by 1.6. Black stays black. The layer is invisible to screenshots and recordings and never takes clicks. In HDR mode macOS draws ordinary white about 9% dimmer once the backlight reaches its peak, so the layer adds that back as the backlight arrives; a percentage is therefore relative to the real standard white. No gamma table is written.
-- **classic** (earlier macOS). macOS scales ordinary content after the gamma table, so a table above 1 lifts white into the headroom: 160% is a table endpoint of about 1.6, capped by the headroom macOS reports.
+The two other methods use HDR headroom instead. macOS gives an XDR display brightness above standard white only while something on screen is HDR: it then drives the backlight up to its peak (1600 nits on a MacBook Pro) and scales ordinary content back down so it looks unchanged. These methods let ordinary white keep part of that light.
+
+- **overlay** (macOS 27.2 and later, the fallback). The gamma table no longer changes the light the panel emits, so Overbright puts a full-screen HDR layer over the built-in display that multiplies everything under it by the boost level: 160% multiplies by 1.6. Black stays black. The layer is invisible to screenshots and recordings and never takes clicks. In HDR mode macOS draws ordinary white about 9% dimmer once the backlight reaches its peak, so the layer adds that back as the backlight arrives; a percentage is therefore relative to the real standard white. No gamma table is written. macOS draws such a layer without its multiply during Spaces and Mission Control transitions, which shows as a white flash; Overbright hides the layer during transitions, which reduces this but does not remove it. That is why `direct` is the default.
+- **classic** (earlier macOS). A tiny, invisible HDR layer opens the headroom. macOS scales ordinary content after the gamma table, so a table above 1 lifts white into the headroom: 160% is a table endpoint of about 1.6, capped by the headroom macOS reports.
 
 The percentage is a request on top of standard white (500 or 600 nits at full backlight, depending on the model): 160% of 600 asks for about 960 nits. With the direct method the top is `maxNits` ÷ standard white: 1000 ÷ 600 = 166%, or 1000 ÷ 500 = 200% on M1 and M2. With the overlay method the ceiling is measured: at its peak macOS reports how far ordinary white can go (the EDR headroom, peak ÷ standard white, 1596 ÷ 600 = 2.67 on a 14" MacBook Pro), and Overbright takes off the 9% it adds back for macOS's dimmer white: 2.67 ÷ 1.09 = 244%. Other models get their own number from their own headroom; the 9% was measured on a 14" MacBook Pro only.
 
-Before changing anything, Overbright records the display's original state, and it writes a recovery marker so that even after a crash or a forced quit the next launch restores standard brightness. Reading and setting the system backlight goes through macOS's DisplayServices framework, a private interface that a future macOS version could change.
+Before changing anything, Overbright records the display's original state, and it writes a recovery marker so that even after a crash or a forced quit the next launch restores standard brightness. **Private interfaces.** The direct method writes framebuffer properties that Apple does not document, and reading and setting the system backlight goes through macOS's DisplayServices framework, which is private too. A macOS update can stop either from working; Apple closed a similar route for other brightness tools in macOS 26.3. If a direct write is not taken, Overbright falls back to `overlay`, and `status --json` shows the method in use (`boostMethod`).
 
 ## Limits and cautions
 
 - **The percentage is not a measurement.** 160% is a requested boost, not 1,600 nits. Peak HDR brightness is not sustainable across the full screen: near the ceiling a mostly white screen can make macOS lower the headroom after a while (heat, power), and the brightest parts then stop at what is left.
 - **How the boost was measured.** With the Mac's own camera, in a dark room, while pressing real keys: `scripts/light-check.sh` (see [AGENTS.md](AGENTS.md)). The camera sees the screen's light on the room; the levels are checked with a null test that does not depend on the camera. Measured on a 14" MacBook Pro with macOS 27.2.1; the 9% correction may differ on other models.
-- **Slightly dim for ~13 s after the boost.** macOS keeps HDR mode on for about 15 s after the boost ends, and meanwhile draws ordinary white about 7% below standard. Then it lowers the backlight and white returns to standard over about 2 seconds. Overbright cannot correct this without keeping HDR mode on.
+- **Slightly dim for ~13 s after the boost (`overlay` and `classic`).** macOS keeps HDR mode on for about 15 s after the boost ends, and meanwhile draws ordinary white about 7% below standard. Then it lowers the backlight and white returns to standard over about 2 seconds. Overbright cannot correct this without keeping HDR mode on. `direct` never turns HDR mode on (`edrHeadroom` stays 1 while boosted), so this should not happen with it; that has not been checked with the camera.
 - **Brighter means warmer.** Higher brightness uses more power and makes more heat. macOS may dim the display on its own; Overbright does not override that.
 - **Don't run two of these at once.** BetterDisplay, BrightIntosh, Lunar, f.lux and similar tools also change the gamma table. Overbright refuses to turn on when it detects an already boosted table.
-- **Not for color-critical work.** The boost can clip highlight detail in HDR photos and video. Restore standard brightness first.
+- **Not for color-critical work.** With `overlay` and `classic` the boost can clip highlight detail in HDR photos and video. Whether `direct` does has not been tested. Restore standard brightness first.
 - **External displays get dimmer and brighter, not overbright.** Going past 100% needs EDR headroom, which only the built-in XDR display has. An external display goes up to its own maximum.
 - **DDC/CI is a conversation with the monitor.** Most answer; some answer slowly, and a few behind docks or adapters do not answer at all and fall back to software dimming. Overbright never writes anything except brightness.
 - **Tested on a limited set of Macs.** See [Supported Macs](#supported-macs) for what was measured and what is only expected to work. CI runs the hardware-independent tests and builds both architectures. It cannot test a real panel.
@@ -288,7 +291,7 @@ Overbright is the new name of Display Boost from version 2.0. The app has a new 
 
 ## Credits
 
-Using EDR headroom together with the gamma table is a technique known from tools such as [BrightIntosh](https://github.com/niklasr22/BrightIntosh) and [BetterDisplay](https://github.com/waydabber/BetterDisplay). If you want a mature tool with many more features, use one of those. Overbright has a different goal: to be small enough that you can make it entirely your own.
+Opening EDR headroom and lifting ordinary content into it, with the gamma table or a multiplying layer, is a technique known from [BrightIntosh](https://github.com/niklasr22/BrightIntosh) and [BetterDisplay](https://github.com/waydabber/BetterDisplay); Overbright's `classic` and `overlay` methods follow it. The `direct` method takes a different route on macOS 27.2 and later: it drives the backlight instead of drawing anything. BetterDisplay Pro also offers an experimental direct mode for the built-in XDR display.
 
 The menu bar icons are from [Lucide](https://lucide.dev) (ISC, see [LICENSES/lucide.txt](LICENSES/lucide.txt)).
 
