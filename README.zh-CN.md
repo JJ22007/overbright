@@ -180,6 +180,7 @@ overbright display dell 60   # 按名字、编号或 all 指定副屏
 overbright display all down
 overbright display dell -40  # 背光为 0，画面压暗到 60%
 overbright report            # 生成机型报告（Markdown），可直接贴进 issue
+overbright mcp               # 同样的功能，作为给 agent 用的 MCP 工具（见下文）
 overbright status --json
 ```
 
@@ -213,6 +214,32 @@ overbright status --json
 | `0` | 完成。 |
 | `1` | App 拒绝了，或者增亮不可用（原因在 stderr）。 |
 | `2` | App 没在运行，或者命令写错了。 |
+
+### 作为 MCP 工具
+
+`overbright mcp` 把命令变成一个 [Model Context Protocol](https://modelcontextprotocol.io) 服务器，走 stdio，不依赖任何第三方包。在 agent 的 MCP 配置里写完整路径：
+
+```json
+{ "mcpServers": { "overbright": { "command": "/Users/你的用户名/.local/bin/overbright", "args": ["mcp"] } } }
+```
+
+| 工具 | 作用 |
+|---|---|
+| `status` | 状态、档位、方法，以及面板当前的回读。不改任何东西。 |
+| `set_brightness` | `{"percent": 150}`。等面板稳定下来再返回。 |
+| `restore` | 关掉增亮，回到标准亮度。等背光降下来再返回。 |
+| `report` | `overbright report` 的 Markdown。不改任何东西。 |
+
+每个结果都带面板回读，agent 拿到的是证据，而不只是“完成了”。`readback` 有这几种：
+
+- `reached`：`direct` 增亮已经到达目标。
+- `missed`：`direct` 增亮没到达目标。
+- `restored`：背光已经回到标准白。
+- `notRestored`：macOS 还把背光保持在高位。
+- `notDirect`：`overlay` 和 `classic` 是在屏幕上画东西，背光读数证明不了。
+- `unknown`：没有读数。
+
+`set_brightness` 和 `restore` 只有在回读证明成功时才不算错误。这些工具不加任何新的显示行为，每个都只是运行对应的命令。`status --json` 里也有同样的 `readback` 对象。
 
 ## 做一个属于你自己的
 

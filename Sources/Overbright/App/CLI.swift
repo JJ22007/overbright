@@ -21,7 +21,7 @@ import AppKit
 enum CLI {
     static let commands: Set<String> = [
         "status", "on", "off", "toggle", "set", "up", "down", "preset", "presets",
-        "displays", "display", "key", "report",
+        "displays", "display", "key", "report", "mcp",
         "config", "check", "version", "help", "--help", "-h", "--version", "--check"
     ]
 
@@ -49,6 +49,9 @@ enum CLI {
       overbright report              a Markdown report of this Mac's panel and
                                      the boost, to paste into a model report
                                      issue; it changes nothing
+      overbright mcp                 serve these as Model Context Protocol tools
+                                     over stdio (status, set_brightness, restore,
+                                     report), each with the panel's readback
       overbright config              print the config file path
       overbright check [file]        validate a config file (default: yours)
       overbright version
@@ -74,6 +77,8 @@ enum CLI {
             return 0
         case "check", "--check":
             return check(path: arguments.dropFirst().first)
+        case "mcp":
+            return serveMCP()
         default:
             guard commands.contains(command) else {
                 fail("error: unknown command \"\(command)\". Run `overbright help`.")
@@ -108,14 +113,39 @@ enum CLI {
     }
 
     private static func send(_ arguments: [String]) -> Int32 {
-        let reply = NSTemporaryDirectory() + "overbright-\(UUID().uuidString).reply"
-        guard let token = CommandToken.read() else {
-            fail("error: Overbright is not running. Open Overbright.app first.")
-            return 2
+        let (code, body) = request(arguments)
+        if code == 0 {
+            FileHandle.standardOutput.write(Data(body.utf8))
+        } else {
+            FileHandle.standardError.write(Data(body.utf8))
         }
+        return code
+    }
+
+    /// Reads JSON-RPC from stdin, one message per line, until it closes.
+    private static func serveMCP() -> Int32 {
+        let server = MCPServer(
+            run: { request($0) },
+            wait: { usleep(useconds_t($0 * 1_000_000)) },
+            version: AppInfo.version
+        )
+        while let line = readLine(strippingNewline: true) {
+            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+            if let reply = server.handle(line) {
+                FileHandle.standardOutput.write(Data((reply + "\n").utf8))
+            }
+        }
+        return 0
+    }
+
+    /// Sends a command to the running app; returns its exit code and output.
+    private static func request(_ arguments: [String]) -> (code: Int32, output: String) {
+        let reply = NSTemporaryDirectory() + "overbright-\(UUID().uuidString).reply"
+        let notRunning = "error: Overbright is not running. Open Overbright.app first.\n"
+        guard let token = CommandToken.read() else { return (2, notRunning) }
         let request: [String: Any] = ["args": arguments, "reply": reply, "token": token]
         guard let data = try? JSONSerialization.data(withJSONObject: request),
-              let json = String(data: data, encoding: .utf8) else { return 2 }
+              let json = String(data: data, encoding: .utf8) else { return (2, "error: bad request\n") }
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name(AppInfo.commandChannel),
             object: json,
@@ -131,18 +161,11 @@ enum CLI {
                 // First line is the exit code; the rest is the output.
                 let parts = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
                 let code = Int32(parts.first ?? "") ?? 2
-                let body = parts.count > 1 ? String(parts[1]) : ""
-                if code == 0 {
-                    FileHandle.standardOutput.write(Data(body.utf8))
-                } else {
-                    FileHandle.standardError.write(Data(body.utf8))
-                }
-                return code
+                return (code, parts.count > 1 ? String(parts[1]) : "")
             }
             usleep(20_000)
         }
-        fail("error: Overbright is not running. Open Overbright.app first.")
-        return 2
+        return (2, notRunning)
     }
 
     private static func fail(_ message: String) {
@@ -457,6 +480,7 @@ final class CommandServer {
             "mainThreadMaxGap": (boostController.mainThreadMaxGap * 1000).rounded() / 1000,
             "transitions": boostController.transitionDiagnostics,
             "direct": boostController.directDiagnostics,
+            "readback": readback(),
             "externalDisplays": externalDisplays.displays.map {
                 [
                     "id": Int($0.id),
@@ -477,6 +501,22 @@ final class CommandServer {
             withJSONObject: status, options: [.prettyPrinted, .sortedKeys]
         )
         return data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
+    /// What the panel reads now, and whether that proves the boost or the
+    /// restore (see `Readback`).
+    private func readback() -> [String: Any] {
+        let framebuffer = PanelLightService.findBuiltInFramebuffer()
+        let panelNits = framebuffer == 0 ? nil : PanelLightService.nits(framebuffer, "IOMFBBrightnessLevel")
+        if framebuffer != 0 { IOObjectRelease(framebuffer) }
+        let capNits = PanelLightService.readings().capNits
+        let target = boostController.directDiagnostics["targetNits"] as? Double
+        let boosted = stateName == "on" && boostController.snapshot.level.percentage > 100
+        let verdict = Readback.judge(boosted: boosted, method: boostController.effectiveMethod.rawValue,
+                                     targetNits: target, panelNits: panelNits, capNits: capNits)
+        func value(_ v: Double?) -> Any { v.map { ($0 * 10).rounded() / 10 } ?? NSNull() }
+        return ["readback": verdict.rawValue, "proves": verdict.proves,
+                "panelNits": value(panelNits), "targetNits": value(target), "standardCapNits": value(capNits)]
     }
 
     /// Everything a model report needs, read-only.
