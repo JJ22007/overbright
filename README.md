@@ -37,10 +37,10 @@ Every 14" and 16" MacBook Pro with a Liquid Retina XDR display, M1 Pro/Max (2021
 
 | Mac | macOS | Status |
 |---|---|---|
-| 14" MacBook Pro | 27.2.1 | **Measured.** Every method, with the camera and real key presses (`scripts/light-check.sh`). |
+| 14" MacBook Pro, M6 (Mac18,1) | 27.2.1 | **Measured.** Every method, with the camera and real key presses (`scripts/light-check.sh`). |
 | 16" MacBook Pro, M1 Max (MacBookPro18,2) | 27.2 | **Panel readings checked.** Support, method, standard white (500 nits), peak (1600) and ceiling (200%) read correctly, including while another app holds HDR open. Light not yet measured. |
 | 14" and 16", M1 Pro/Max and M2 Pro/Max | 13 or later | **Expected to work, untested.** Standard white 500 nits, so the top is 200%. |
-| 14" and 16", M3, M4, M5 and their Pro/Max | 13 or later | **Expected to work, untested.** Standard white 600 nits, so the top is 166%; less in bright light, where macOS raises standard white (up to 1000 nits outdoors on M4 and later, which leaves no room to boost). |
+| 14" and 16", M3, M4, M5, M6 and their Pro/Max | 13 or later | **Expected to work, untested.** Standard white 600 nits, so the top is 166%; less in bright light, where macOS raises standard white (up to 1000 nits outdoors on M4 and later, which leaves no room to boost). |
 | MacBook Air, 13" MacBook Pro, Intel MacBook Pro | | **Not supported.** No XDR panel. The menu says so, and nothing is written to the display. |
 | External displays, lid closed | | **No boost.** External displays keep their own 0–100% brightness. |
 
