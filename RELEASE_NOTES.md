@@ -7,6 +7,16 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 - Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
 - To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
+## 2.6.2
+
+- **Fixed: after a boost ended, the screen could stay dim at about 160 nits** while standard white was 600. Overbright saved a backlight level caught while macOS was still ramping and wrote it back at the end, then saved it again on the next boost. Ending a boost now goes back to the standard white macOS reports, and only lowers a backlight that is still above it.
+- **Camera checks keep nothing they don't need.** The camera never saved images. It now stops as soon as a check ends, fails or is interrupted (it used to keep recording numbers for its full 150 s), and the per-frame numbers are deleted once the report is written (`--keep-raw` keeps them). See `SECURITY.md` for how to delete measurement files and revoke the camera.
+- **The `overbright` command needs a token.** The app writes a fresh token at each launch (`~/Library/Application Support/Overbright/command-token`, readable only by you), and ignores requests without it, so a sandboxed app can no longer change your brightness. The `overbright` command reads it for you; nothing changes for scripts that use it.
+- **`overbright mcp`**: an MCP server over stdio with four tools (`status`, `set_brightness`, `restore`, `report`). Every result carries the panel's readback, and `set_brightness` and `restore` wait until the panel proves them, so an agent gets evidence instead of an exit code. `status --json` gains the same `readback` object.
+- **Two opt-in options, both off by default:** `lowBatteryOff` ends the boost when the battery falls to a percentage you choose, and `toggleShortcut` (for example `"ctrl+opt+cmd+b"`) switches the boost from anywhere without Accessibility permission. Neither the shortcut press nor an actual low-battery shutoff has been tried by hand yet.
+- **New `SECURITY.md`**, and the README now leads with how Overbright differs from Vivid and BrightIntosh, with measured numbers.
+- The logic tests could pass while checks failed (the failure check sat halfway through the file). Fixed; 331 checks now run.
+
 ## 2.6.1
 
 - **Fixed: the boost could drop out when the room got darker.** With the direct method, when ambient light fell macOS lowered standard white (720 to 600 nits on a 14" MacBook Pro) and Overbright took the lower backlight for you dimming the screen. The boost was not put back, while the menu and `status` still said it was on. Overbright now follows the new standard white and keeps boosting.
