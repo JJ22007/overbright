@@ -28,17 +28,33 @@ final class BoostController {
     /// The direct method's ceiling in nits (`maxNits`).
     var directCeiling: Double = DirectPanel.defaultCeiling {
         didSet {
-            direct.ceilingNits = directCeiling
+            direct.configuredCeiling = directCeiling
             loadPanelMaximum()
-            if wantedActive, state == .active, method == .direct { applyCurrentLevel() }
+            if wantedActive, state == .active, effectiveMethod == .direct { applyCurrentLevel() }
         }
+    }
+
+    /// What this Mac's panel reports, for `status --json`: enough for a user
+    /// on another model to send in an issue.
+    var panelDiagnostics: [String: Any] {
+        let readings = PanelLightService.readings()
+        func rounded(_ value: Double?) -> Any { value.map { ($0 * 10).rounded() / 10 } ?? NSNull() }
+        return [
+            "model": PanelLightService.modelIdentifier ?? NSNull(),
+            "peakNits": rounded(readings.peakNits),
+            "capNits": rounded(readings.capNits),
+            "systemStandardNits": rounded(readings.systemStandardNits),
+            "standardNits": rounded(PanelSupport.standardWhite(readings)),
+            "directPossible": PanelSupport.canDriveDirectly(readings),
+            "candidateMethods": candidateMethods(readings).map(\.rawValue),
+        ]
     }
 
     var directDiagnostics: [String: Any] {
         [
             "standardNits": direct.standardNits.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
             "targetNits": direct.targetNits.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
-            "ceilingNits": directCeiling,
+            "ceilingNits": direct.ceilingNits,
             "rewrites": direct.rewrites,
         ]
     }
@@ -58,14 +74,36 @@ final class BoostController {
     private var backlightObservation = BacklightObservation()
     private var lastObservedBacklight: Float?
 
-    /// The configured boost method.
-    var method: BoostMethod = .classic {
+    /// The method from the config; nil for "auto".
+    var configuredMethod: BoostMethod? {
         didSet {
+            // Also at launch, where "auto" sets nil over nil: the scale's top
+            // must come from this panel either way.
             loadPanelMaximum()
-            guard method != oldValue, wantedActive, state == .active else { return }
-            applyCurrentLevel()
+            onCeilingChange?()
+            // A running boost restarts with a new method.
+            if configuredMethod != oldValue, wantedActive, state == .active {
+                disable()
+                enable()
+            }
         }
     }
+
+    /// The method the running boost uses, once it has started.
+    private var activeMethod: BoostMethod?
+
+    /// The methods to try on this Mac, in order (`PanelSupport.methods`), with
+    /// `direct` left out where the panel cannot be driven directly.
+    func candidateMethods(_ given: PanelReadings? = nil) -> [BoostMethod] {
+        let readings = given ?? PanelLightService.readings()
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let all = PanelSupport.methods(configured: configuredMethod, major: os.majorVersion, minor: os.minorVersion)
+        let usable = all.filter { $0 != .direct || PanelSupport.canDriveDirectly(readings) }
+        return usable.isEmpty ? Array(all.suffix(1)) : usable
+    }
+
+    /// The method in use, or the one the next boost will try first.
+    var effectiveMethod: BoostMethod { activeMethod ?? candidateMethods().first ?? .overlay }
 
     /// Called when the measured panel ceiling changes the top of the scale.
     var onCeilingChange: (() -> Void)?
@@ -75,12 +113,15 @@ final class BoostController {
     /// method stays at its calibrated 160%.
     private func loadPanelMaximum() {
         let stored = defaults.object(forKey: DefaultsKey.panelMaximum) as? NSNumber
-        switch method {
+        switch effectiveMethod {
         case .overlay:
             BoostLevel.maximum = max(stored?.floatValue ?? BoostLevel.classicMaximum, BoostLevel.classicMaximum)
         case .direct:
-            let standard = direct.standardNits ?? DirectPanelService.currentStandardNits() ?? 600
-            BoostLevel.maximum = DirectPanel.maximumLevel(standard: standard, ceiling: directCeiling)
+            let readings = PanelLightService.readings()
+            let ceiling = PanelSupport.ceiling(configured: directCeiling, peakNits: readings.peakNits)
+            // effectiveMethod is only .direct when standard white can be told.
+            let standard = direct.standardNits ?? PanelSupport.standardWhite(readings)
+            BoostLevel.maximum = standard.flatMap { DirectPanel.maximumLevel(standard: $0, ceiling: ceiling) }
                 ?? BoostLevel.minimum
         case .classic:
             BoostLevel.maximum = BoostLevel.classicMaximum
@@ -93,7 +134,7 @@ final class BoostController {
     }
 
     private func panelHeadroomMeasured(_ headroom: Double) {
-        guard method == .overlay, let top = PanelCeiling.level(headroom: headroom),
+        guard effectiveMethod == .overlay, let top = PanelCeiling.level(headroom: headroom),
               abs(top - BoostLevel.maximum) >= 0.01 else { return }
         logger.info("panel ceiling \(top, privacy: .public) from headroom \(headroom, privacy: .public)")
         BoostLevel.maximum = top
@@ -102,7 +143,6 @@ final class BoostController {
         onCeilingChange?()
         publishSnapshot()
     }
-    var effectiveMethod: BoostMethod { method }
 
     /// Longest gap between boost-layer redraws while it is up (overlay method).
     var overlayMaxFrameGap: TimeInterval { overlay.maxFrameGap }
@@ -155,7 +195,8 @@ final class BoostController {
             ),
             potentialEDRHeadroom: Double(
                 screen?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1
-            )
+            ),
+            support: PanelSupport.verdict(PanelLightService.readings(includeStandard: false))
         )
     }
 
@@ -206,15 +247,16 @@ final class BoostController {
             }
         }
 
+        let readings = PanelLightService.readings()
+        if case let .unsupported(reason) = PanelSupport.verdict(readings) {
+            wantedActive = false
+            setState(.unavailable(reason.message))
+            return
+        }
         guard let screen = DisplayLookup.builtInScreen,
               let displayID = screen.overbrightID else {
             wantedActive = false
-            setState(.unavailable(L10n.tr("No built-in display found", "未找到内置显示器")))
-            return
-        }
-        guard screen.maximumPotentialExtendedDynamicRangeColorComponentValue > 1.05 else {
-            wantedActive = false
-            setState(.unavailable(L10n.tr("The built-in display does not support XDR/EDR", "内置屏幕不支持 XDR/EDR")))
+            setState(.unavailable(PanelSupport.Reason.noBuiltInDisplay.message))
             return
         }
 
@@ -242,41 +284,54 @@ final class BoostController {
             defaults.synchronize()
         }
 
-        // The overlay method never writes a gamma table: on macOS 27.2 a table
-        // installed when EDR starts makes white jump to the full backlight.
-        guard effectiveMethod != .classic || gamma.captureBaseline(displayID: displayID) else {
-            failActivation(L10n.tr("Could not read the display gamma table", "无法读取屏幕颜色表"))
-            return
-        }
-
         guard !raiseBacklight || nativeBrightness.write(1, displayID: displayID) else {
             failActivation(L10n.tr("Could not set the system backlight level", "无法设置系统背光亮度"))
             return
         }
         backlightMonitoringEnabled = true
         lastObservedBacklight = nativeBrightness.read(displayID: displayID)
-        guard startEDRLayer(on: screen) else {
-            failActivation(L10n.tr("Could not create the EDR layer", "无法创建 EDR 图层"))
+        guard startBoost(on: screen, displayID: displayID, readings: readings) else {
+            failActivation(L10n.tr("Could not start the boost on this display", "无法在此屏幕上开启增亮"))
             return
         }
 
         waitForEDR(generation: generation, attemptsRemaining: 80)
     }
 
-    private func startEDRLayer(on screen: NSScreen) -> Bool {
-        switch effectiveMethod {
-        case .overlay: return overlay.start(on: screen)
-        case .direct:
-            guard direct.begin(level: level.factor) else { return false }
-            let before = BoostLevel.maximum
+    /// Tries each candidate method in turn and keeps the first that starts.
+    /// A model where the direct writes are not taken falls back to the overlay.
+    private func startBoost(on screen: NSScreen, displayID: CGDirectDisplayID, readings: PanelReadings) -> Bool {
+        let before = BoostLevel.maximum
+        defer {
             loadPanelMaximum()
             if BoostLevel.maximum != before { onCeilingChange?() }
-            return true
-        case .classic: return edrTrigger.start(on: screen)
+        }
+        for candidate in candidateMethods(readings) {
+            if start(candidate, on: screen, displayID: displayID, readings: readings) {
+                activeMethod = candidate
+                logger.info("boost method \(candidate.rawValue, privacy: .public)")
+                return true
+            }
+            logger.notice("boost method \(candidate.rawValue, privacy: .public) did not start; trying the next")
+        }
+        return false
+    }
+
+    private func start(_ method: BoostMethod, on screen: NSScreen, displayID: CGDirectDisplayID, readings: PanelReadings) -> Bool {
+        switch method {
+        case .overlay:
+            return overlay.start(on: screen)
+        case .direct:
+            return direct.begin(level: level.factor, readings: readings)
+        case .classic:
+            // Only the classic method writes a gamma table: on macOS 27.2 a
+            // table installed when EDR starts makes white jump to the full backlight.
+            return gamma.captureBaseline(displayID: displayID) && edrTrigger.start(on: screen)
         }
     }
 
     private func stopEDRLayers() {
+        activeMethod = nil
         overlay.stop()
         edrTrigger.stop()
         if direct.isActive {
@@ -609,7 +664,7 @@ final class BoostController {
     /// bright surroundings (600 to 720 nits measured): 166% or 138% under a
     /// 1000-nit ceiling.
     private func refreshDirectMaximum() {
-        guard method == .direct else { return }
+        guard effectiveMethod == .direct else { return }
         let before = BoostLevel.maximum
         loadPanelMaximum()
         if abs(BoostLevel.maximum - before) >= 0.01 {
@@ -638,7 +693,7 @@ final class BoostController {
         guard verifyNativeBrightnessForBoost(displayID: displayID) else { return }
 
         if effectiveMethod == .direct {
-            if !direct.isActive, !direct.begin(level: level.factor) {
+            if !direct.isActive, !direct.begin(level: level.factor, readings: PanelLightService.readings()) {
                 failActivation(L10n.tr("Could not drive the panel backlight", "无法控制屏幕背光"))
                 return
             }
@@ -676,6 +731,7 @@ final class BoostController {
                 failActivation(L10n.tr("Could not re-enter EDR mode", "无法恢复 EDR 模式"))
                 return
             }
+            activeMethod = .classic
             setState(.engaging)
             waitForEDR(generation: generation, attemptsRemaining: 80)
             return
@@ -898,7 +954,7 @@ final class BoostController {
     }
 
     var scaleTop: Double {
-        snapshot.potentialEDRHeadroom > 1.05 ? BuiltInBrightnessScale.top : 100
+        snapshot.support == .supported ? BuiltInBrightnessScale.top : 100
     }
 
     /// One brightness-key press on the built-in display. Below 100% it steps
@@ -958,5 +1014,31 @@ final class BoostController {
             iccProfileData: screen.colorSpace?.iccProfileData,
             fallbackName: screen.colorSpace?.localizedName
         )
+    }
+}
+
+extension PanelSupport.Reason {
+    /// Shown in the menu and by `overbright status`.
+    var message: String {
+        switch self {
+        case .noBuiltInDisplay:
+            return L10n.tr("No built-in display (lid closed?); boost is for the built-in XDR display",
+                           "未找到内置屏幕（合盖了？）；增亮只用于内置 XDR 屏幕")
+        case .noHeadroom:
+            return L10n.tr("Not supported: this Mac's built-in display is not a Liquid Retina XDR display",
+                           "不支持：这台 Mac 的内置屏幕不是 Liquid Retina XDR 屏幕")
+        case let .notXDR(peak):
+            return L10n.tr("Not supported: the built-in display peaks at \(Int(peak)) nits; boost needs an XDR display",
+                           "不支持：内置屏幕最高 \(Int(peak)) 尼特；增亮需要 XDR 屏幕")
+        }
+    }
+
+    /// A stable name for `status --json`.
+    var code: String {
+        switch self {
+        case .noBuiltInDisplay: return "no-built-in-display"
+        case .noHeadroom: return "no-edr-headroom"
+        case .notXDR: return "not-xdr"
+        }
     }
 }

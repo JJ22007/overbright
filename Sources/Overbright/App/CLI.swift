@@ -404,8 +404,8 @@ final class CommandServer {
         if let scale = boostController.scalePercent {
             line += " (scale \(Int(scale.rounded()))%)"
         }
-        if snapshot.potentialEDRHeadroom <= 1.05 {
-            line += " (this display has no EDR headroom)"
+        if case let .unsupported(reason) = snapshot.support {
+            line += " (\(reason.message))"
         }
         if case let .unavailable(message) = snapshot.state {
             line += " (\(message))"
@@ -420,7 +420,12 @@ final class CommandServer {
             "level": snapshot.level.percentage,
             "maxLevel": ConfigStore.shared.config.maxLevel.map { $0 as Any } ?? "auto",
             "panelMaxLevel": (Double(BoostLevel.maximum) * 10000).rounded() / 100,
-            "supported": snapshot.potentialEDRHeadroom > 1.05,
+            "supported": snapshot.support == .supported,
+            "unsupportedReason": {
+                if case let .unsupported(reason) = snapshot.support { return reason.code }
+                return NSNull()
+            }() as Any,
+            "panel": boostController.panelDiagnostics,
             "edrHeadroom": (snapshot.currentEDRHeadroom * 100).rounded() / 100,
             "potentialEdrHeadroom": (snapshot.potentialEDRHeadroom * 100).rounded() / 100,
             "brightnessKeys": keysName,

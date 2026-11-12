@@ -76,7 +76,7 @@ enum OverbrightApplication {
 
         ConfigStore.shared.load()
         let controller = BoostController()
-        controller.method = ConfigStore.shared.config.resolvedBoostMethod()
+        controller.configuredMethod = ConfigStore.shared.config.configuredBoostMethod
         print("SELFTEST method=\(controller.effectiveMethod.rawValue)")
         let brightnessService = NativeBrightnessService()
         guard let displayID = DisplayLookup.builtInScreen?.overbrightID,

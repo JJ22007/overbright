@@ -43,7 +43,8 @@ struct Config: Equatable {
     /// and the picture is darkened in software, down to -90%.
     var extraDimming: Bool = true
     /// How the boost brightens the built-in display: "auto" picks by macOS
-    /// version, "overlay" or "classic" force one. See `BoostMethod`.
+    /// version and panel, "direct", "overlay" or "classic" put one first.
+    /// See `BoostMethod` and `PanelSupport.methods`.
     var boostMethod: String = "auto"
     /// The direct method's ceiling in nits.
     var maxNits: Double = DirectPanel.defaultCeiling
@@ -138,6 +139,9 @@ struct Config: Equatable {
     }
 
     /// The boost method for this Mac: the configured one, or by macOS version.
+    /// The method the config asks for; nil for "auto".
+    var configuredBoostMethod: BoostMethod? { BoostMethod(rawValue: boostMethod) }
+
     func resolvedBoostMethod(
         os: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
     ) -> BoostMethod {

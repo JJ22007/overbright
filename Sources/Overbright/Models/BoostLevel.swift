@@ -81,6 +81,8 @@ struct BoostSnapshot: Equatable {
     let level: BoostLevel
     let currentEDRHeadroom: Double
     let potentialEDRHeadroom: Double
+    /// Whether this Mac's built-in display can boost at all (`PanelSupport`).
+    var support: PanelSupport.Verdict = .supported
 }
 
 /// The highest boost a panel can show with the overlay method. At the EDR peak

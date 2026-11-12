@@ -7,6 +7,13 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 - Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
 - To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
+## Unreleased
+
+- **More MacBook Pros.** Nothing is tied to the 14" MacBook Pro any more. Standard white, the peak, the ceiling and the scale's top are read from each panel, so a 16" or an M1/M2 model gets its own numbers (200% on M1 and M2, whose standard white is 500 nits; 166% on M3 and later). Every write is bounded by the panel's own peak. See "Supported Macs" in the README for what was measured and what is only expected to work, and please report your model.
+- **Falls back instead of failing.** When the direct method cannot drive the panel, or macOS does not take the write, the boost uses the overlay method instead of stopping with an error.
+- **Fixed: a boost started while HDR was on screen went to the full 1600 nits.** With an HDR video playing (or another boost tool holding HDR open), macOS raises the backlight cap to the peak, and the direct method took that for standard white. Standard white now comes from CoreBrightness in that case.
+- **Clear "not supported".** A MacBook Air, a 13" MacBook Pro or an Intel MacBook Pro now says why in the menu and in `overbright status`, and nothing is written to its display. `status --json` adds `unsupportedReason` and `panel` (model, peak, cap, standard white, the methods it will try).
+
 ## 2.5
 
 - **Boost without a layer on macOS 27.2: no more white screen.** The new default method, `direct`, drives the built-in panel's backlight past standard white itself (the framebuffer's nits cap and level) instead of covering the screen with a multiplying HDR layer. The layer flashed white in Spaces and Mission Control transitions, a macOS behaviour other boost apps share; with nothing drawn on screen, switching desktops looks as usual and the screen no longer dims while switching. The top is 1000 nits (`maxNits`, up to 1300), which the panel holds across the whole screen: 166% of a 600-nit standard white, less in bright surroundings where macOS raises standard white. The previous values are written back when the boost ends, when you lower the brightness, and at the next launch after a crash. `"boostMethod": "overlay"` keeps the 2.4 layer.

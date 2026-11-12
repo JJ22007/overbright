@@ -422,6 +422,95 @@ let tooBright = parsed(#"{"maxNits": 1600}"#)
 expect(tooBright.maxNits == 1300 && tooBright.warnings.count == 1, "maxNits stops at 1300 with a warning")
 expect(parsed(#"{"boostMethod": "direct"}"#).boostMethod == "direct", "direct is a method name")
 
+// MARK: Panel support across models
+//
+// Readings as each model reports them. The 16" M1 Max (MacBookPro18,2) row is
+// read from a real one on macOS 27.2; the rest follow Apple's published panel
+// specifications (1600-nit XDR peak; standard white 500 nits on M1/M2, 600 on
+// M3 and later, up to 1000 outdoors on M4 and later) and are not measured.
+
+struct SimulatedMac {
+    let name: String
+    let readings: PanelReadings
+    let supported: Bool
+    let direct: Bool
+    let standard: Double?
+    let top: Float?   // DirectPanel.maximumLevel under the default ceiling
+}
+
+func xdr(cap: Double, system: Double? = nil, peak: Double? = 1600, headroom: Double = 16) -> PanelReadings {
+    PanelReadings(hasBuiltInDisplay: true, potentialHeadroom: headroom, peakNits: peak,
+                  capNits: cap, systemStandardNits: system ?? cap)
+}
+
+let simulatedMacs: [SimulatedMac] = [
+    SimulatedMac(name: "16\" M1 Max (measured)", readings: xdr(cap: 500), supported: true, direct: true, standard: 500, top: 2.0),
+    SimulatedMac(name: "14\" M1 Pro", readings: xdr(cap: 500), supported: true, direct: true, standard: 500, top: 2.0),
+    SimulatedMac(name: "16\" M2 Max", readings: xdr(cap: 500), supported: true, direct: true, standard: 500, top: 2.0),
+    SimulatedMac(name: "14\" M3", readings: xdr(cap: 600), supported: true, direct: true, standard: 600, top: 1.66),
+    SimulatedMac(name: "16\" M3 Max", readings: xdr(cap: 600), supported: true, direct: true, standard: 600, top: 1.66),
+    SimulatedMac(name: "14\" M4 Pro, bright room", readings: xdr(cap: 720), supported: true, direct: true, standard: 720, top: 1.38),
+    SimulatedMac(name: "16\" M4 Max, outdoors", readings: xdr(cap: 1000), supported: true, direct: true, standard: 1000, top: nil),
+    SimulatedMac(name: "14\" M5, HDR video playing", readings: xdr(cap: 1600, system: 600), supported: true, direct: true, standard: 600, top: 1.66),
+    SimulatedMac(name: "XDR, HDR video, no CoreBrightness", readings: PanelReadings(hasBuiltInDisplay: true, potentialHeadroom: 16, peakNits: 1600, capNits: 1600, systemStandardNits: nil), supported: true, direct: false, standard: nil, top: nil),
+    SimulatedMac(name: "XDR without a readable framebuffer", readings: PanelReadings(hasBuiltInDisplay: true, potentialHeadroom: 16, peakNits: nil, capNits: nil, systemStandardNits: 600), supported: true, direct: false, standard: nil, top: nil),
+    SimulatedMac(name: "MacBook Air M2", readings: xdr(cap: 500, peak: 500, headroom: 1.6), supported: false, direct: false, standard: 500, top: nil),
+    SimulatedMac(name: "13\" MacBook Pro M2", readings: xdr(cap: 500, peak: 500, headroom: 1.6), supported: false, direct: false, standard: 500, top: nil),
+    SimulatedMac(name: "Intel 16\" MacBook Pro", readings: PanelReadings(hasBuiltInDisplay: true, potentialHeadroom: 1, peakNits: nil, capNits: nil, systemStandardNits: nil), supported: false, direct: false, standard: nil, top: nil),
+    SimulatedMac(name: "Lid closed, external display only", readings: PanelReadings(hasBuiltInDisplay: false, potentialHeadroom: 1, peakNits: nil, capNits: nil, systemStandardNits: nil), supported: false, direct: false, standard: nil, top: nil),
+]
+
+for mac in simulatedMacs {
+    let r = mac.readings
+    expect((PanelSupport.verdict(r) == .supported) == mac.supported, "\(mac.name): supported is \(mac.supported)")
+    expect(PanelSupport.canDriveDirectly(r) == mac.direct, "\(mac.name): direct is \(mac.direct)")
+    if mac.supported {
+        expect(PanelSupport.standardWhite(r) == mac.standard, "\(mac.name): standard white \(String(describing: mac.standard))")
+        let ceiling = PanelSupport.ceiling(configured: DirectPanel.defaultCeiling, peakNits: r.peakNits)
+        let top = mac.standard.flatMap { DirectPanel.maximumLevel(standard: $0, ceiling: ceiling) }
+        expect(top == mac.top, "\(mac.name): top of the scale \(String(describing: mac.top))")
+        if mac.direct, let limit = PanelSupport.writeLimit(peakNits: r.peakNits), let standard = mac.standard {
+            for level: Float in [1, 1.5, 2, 4] {
+                let target = DirectPanel.targetNits(standard: standard, level: level, ceiling: ceiling) ?? 0
+                expect(target <= max(ceiling, standard) && target <= limit, "\(mac.name): \(level)x stays within ceiling and peak")
+            }
+        }
+    }
+    // Every Mac on macOS 27.2: unsupported or not, the method list never
+    // offers `direct` unless the panel can be driven, and never `classic`.
+    let methods = PanelSupport.methods(configured: nil, major: 27, minor: 2)
+        .filter { $0 != .direct || PanelSupport.canDriveDirectly(r) }
+    expect(!methods.isEmpty && !methods.contains(.classic), "\(mac.name): a 27.2 fallback exists and is never classic")
+}
+
+expect(PanelSupport.verdict(simulatedMacs[10].readings) == .unsupported(.notXDR(peakNits: 500)), "an Air is refused as not XDR")
+expect(PanelSupport.verdict(simulatedMacs[12].readings) == .unsupported(.noHeadroom), "an Intel MacBook Pro has no headroom")
+expect(PanelSupport.verdict(simulatedMacs[13].readings) == .unsupported(.noBuiltInDisplay), "a closed lid has no built-in display")
+expect(PanelSupport.verdict(xdr(cap: 500, headroom: .nan)) == .unsupported(.noHeadroom), "a broken headroom reading is refused")
+
+// The ceiling follows the panel's peak, never the 14" numbers.
+expect(PanelSupport.ceiling(configured: 1000, peakNits: 1600) == 1000, "1600-nit peak: the sustained 1000")
+expect(PanelSupport.ceiling(configured: 1300, peakNits: 1600) == 1300, "1600-nit peak: maxNits up to 1300")
+expect(PanelSupport.ceiling(configured: 1000, peakNits: 1200) == 975, "a dimmer peak lowers the ceiling to 81% of it")
+expect(PanelSupport.ceiling(configured: 1300, peakNits: 2000) == 1300, "a brighter peak never raises the configured ceiling")
+expect(PanelSupport.ceiling(configured: 1000, peakNits: nil) == 1000, "an unknown peak keeps the configured ceiling")
+expect(PanelSupport.writeLimit(peakNits: 1600) == 1600, "writes stop at the panel's peak")
+expect(PanelSupport.writeLimit(peakNits: 2000) == 2000, "a brighter panel has its own peak")
+expect(PanelSupport.writeLimit(peakNits: 500) == nil, "nothing is written to a non-XDR panel")
+expect(PanelSupport.writeLimit(peakNits: nil) == nil, "nothing is written without a known peak")
+expect(PanelSupport.standardWhite(xdr(cap: 1500, system: 1450)) == nil, "a system reading near the peak is not standard white")
+
+// Methods by macOS version and config.
+expect(PanelSupport.methods(configured: nil, major: 13, minor: 0) == [.classic], "macOS 13 (the minimum): classic")
+expect(PanelSupport.methods(configured: nil, major: 27, minor: 1) == [.classic], "macOS 27.1: classic")
+expect(PanelSupport.methods(configured: nil, major: 27, minor: 2) == [.direct, .overlay], "macOS 27.2: direct, then overlay")
+expect(PanelSupport.methods(configured: nil, major: 28, minor: 0) == [.direct, .overlay], "later macOS: direct, then overlay")
+expect(PanelSupport.methods(configured: .overlay, major: 27, minor: 2) == [.overlay, .direct], "overlay asked for comes first")
+expect(PanelSupport.methods(configured: .direct, major: 15, minor: 0) == [.direct, .classic], "direct on older macOS falls back to classic")
+expect(PanelSupport.methods(configured: .classic, major: 27, minor: 2) == [.classic], "classic asked for is classic alone")
+expect(Config().configuredBoostMethod == nil, "auto is no configured method")
+expect(parsed(#"{"boostMethod": "overlay"}"#).configuredBoostMethod == .overlay, "a named method is configured")
+
 if failureCount > 0 {
     exit(1)
 }
