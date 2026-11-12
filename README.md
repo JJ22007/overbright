@@ -1,8 +1,8 @@
 <h1 align="center">Overbright</h1>
 
 <p align="center">
-  <b>Take your MacBook's XDR display past 100%.</b><br>
-  A menu bar app you can script, configure in one file, and reshape with an AI agent.
+  <b>Brighter MacBook XDR, by driving the backlight itself: nothing drawn on screen.</b><br>
+  Measured with the Mac's own camera, not just its own readings.
 </p>
 
 <p align="center">
@@ -13,7 +13,17 @@
   <a href="#build-your-own">Build your own</a>
 </p>
 
-Overbright opens the extra brightness that a Liquid Retina XDR display normally keeps for HDR video, and lets you use it for everything: up to what the panel holds across the whole screen (166% of standard brightness on M3 and later, 200% on M1 and M2, worked out on each Mac from what its panel reports), from the menu bar, from F1/F2, or from a command. It is plain Swift with no dependencies and no Xcode project. Settings sit in one JSON file, and anything the file can't do is a short edit away, by you or by your AI coding agent.
+Most boost tools, Vivid and BrightIntosh among them, put an HDR layer over the screen or rewrite the gamma table to lift ordinary content into the brightness an XDR display keeps for HDR. On macOS 27.2 and later Overbright does neither. It writes the built-in panel's backlight cap and level directly (`direct`), so nothing is drawn on screen, Spaces and Mission Control have nothing to flash, and HDR mode never turns on. On earlier macOS it falls back to the layer or the gamma table, like the others.
+
+What that rests on, measured on a 14" MacBook Pro with macOS 27.2.1:
+
+- **The gamma table no longer changes the light.** With the built-in camera in a dark room, halving the table moved the camera 0% as much as the same dimming drawn on screen; with HDR open, 1%.
+- **`direct` does change it.** In the camera's null test, 106%, 125% and 160% came out 0.9%, 2.8% and 3.5% above what was asked. The panel reads 720, 900 and 996 nits for 120%, 150% and 166%, at 6.8 W of backlight power at 100% and 10.7 W at 166%.
+- **No dim period afterwards.** The backlight is back at standard white within 0.1 s when the boost ends.
+
+How it was measured, and what is still unmeasured, is in [How it works](#how-it-works), [Limits and cautions](#limits-and-cautions) and [AGENTS.md](AGENTS.md).
+
+It goes up to what the panel holds across the whole screen: 166% of standard brightness on M3 and later, 200% on M1 and M2, worked out on each Mac from what its panel reports. Use it from the menu bar, from F1/F2, or from a command. It is plain Swift with no dependencies and no Xcode project. Settings sit in one JSON file; anything the file can't do is a short edit away, by you or by your AI coding agent.
 
 ## Features
 
