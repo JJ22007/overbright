@@ -1,0 +1,64 @@
+name: Model report
+description: Tell us how Overbright works on your Mac, whether it works or not.
+title: "Model report: <your Mac>"
+labels: [model-report]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. Only two Macs have been checked on real hardware so far, so every report helps, including "it doesn't work".
+
+        Before you fill this in, turn the boost on at the top of the scale, then run `overbright report` in Terminal. It reads the panel and checks that the boost reached it. It changes nothing on screen and contains nothing personal.
+  - type: input
+    id: model
+    attributes:
+      label: Model identifier
+      description: "Run `sysctl -n hw.model`. It is also the first row of `overbright report`."
+      placeholder: MacBookPro18,1
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac
+      description: Apple menu → About This Mac.
+      placeholder: MacBook Pro 16-inch, 2021, M1 Pro
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      description: "Run `sw_vers -productVersion`."
+      placeholder: "27.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: works
+    attributes:
+      label: Does the boost work?
+      options:
+        - "Yes: the screen gets brighter"
+        - "Partly: it gets brighter, but something is off (say what below)"
+        - "No: nothing changes"
+        - "The menu says this Mac is not supported"
+        - "The app does not start"
+    validations:
+      required: true
+  - type: input
+    id: nits
+    attributes:
+      label: Nits at the top of the scale
+      description: "\"Backlight now\" in `overbright report`, or `readback.panelNits` in `overbright status --json`, with the boost at the top."
+      placeholder: "1000"
+  - type: textarea
+    id: report
+    attributes:
+      label: Output of `overbright report`
+      description: Paste it as it is. It ends with the full `overbright status --json`. If `report` fails, paste `overbright status --json` instead.
+      placeholder: "### Overbright model report ..."
+    validations:
+      required: true
+  - type: textarea
+    id: seen
+    attributes:
+      label: Anything you saw on screen
+      description: White flashes, flicker, the boost dropping out, after sleep or with the lid closed, HDR video. Or "nothing unusual".
