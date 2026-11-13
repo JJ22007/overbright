@@ -498,7 +498,8 @@ final class CommandServer {
                     "name": $0.name,
                     "control": $0.control.rawValue,
                     "level": Int($0.level.rounded()),
-                    "minimum": Int($0.minimum.rounded())
+                    "minimum": Int($0.minimum.rounded()),
+                    "blackout": externalDisplays.blackout.contains($0.id)
                 ] as [String: Any]
             },
             "version": AppInfo.version

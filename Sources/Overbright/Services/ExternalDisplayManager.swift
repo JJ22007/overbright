@@ -38,6 +38,7 @@ final class ExternalDisplayManager {
             if isEnabled {
                 refresh()
             } else {
+                blackout = []
                 dimmers.values.forEach { $0.restore() }
                 dimmers = [:]
                 displays = []
@@ -57,6 +58,18 @@ final class ExternalDisplayManager {
                 }
             }
             onListChange?()
+        }
+    }
+
+    /// Displays whose picture is fully black on top of their level, for
+    /// `dimShortcut` (see `DimAll.blackout`). Levels are not changed by it.
+    var blackout: Set<CGDirectDisplayID> = [] {
+        didSet {
+            guard blackout != oldValue else { return }
+            for id in blackout.symmetricDifference(oldValue) {
+                guard let display = displays.first(where: { $0.id == id }) else { continue }
+                applyGamma(Self.gammaFactor(for: display), to: id)
+            }
         }
     }
 
@@ -204,6 +217,7 @@ final class ExternalDisplayManager {
         for id in dimmers.keys where !ids.contains(id) {
             dimmers[id] = nil
         }
+        blackout = blackout.filter { ids.contains($0) }
         for id in Array(endpoints.keys) where !ids.contains(id) {
             endpoints[id] = nil
             maxima[id] = nil
@@ -326,8 +340,17 @@ final class ExternalDisplayManager {
         applyGamma(ExternalBrightness.softwareFactor(level: level), to: id)
     }
 
-    /// Gamma dimming on one display; a factor of 1 removes it.
-    private func applyGamma(_ factor: Float, to id: CGDirectDisplayID) {
+    /// The gamma multiplier a display's level calls for, before any blackout.
+    private static func gammaFactor(for display: ExternalDisplay) -> Float {
+        display.control == .software
+            ? ExternalBrightness.softwareFactor(level: display.level)
+            : ExternalBrightness.split(display.level).factor
+    }
+
+    /// Gamma dimming on one display; a factor of 1 removes it. A blacked-out
+    /// display gets 0 whatever its level asks for.
+    private func applyGamma(_ requested: Float, to id: CGDirectDisplayID) {
+        let factor: Float = blackout.contains(id) ? 0 : requested
         if factor >= 0.999 {
             dimmers.removeValue(forKey: id)?.restore()
             return

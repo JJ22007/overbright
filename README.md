@@ -157,7 +157,7 @@ The config lives at `~/.config/overbright/config.json`. Open it from the menu wi
 | `lowBatteryOff` | `false` | A battery percentage, 5 to 95. When the battery falls to it while unplugged, the boost ends once; turn it back on and it stays on. |
 | `toggleShortcut` | `false` | A global shortcut that switches the boost, such as `"ctrl+opt+cmd+b"`: a letter, digit, F-key or `space`, with Command, Control or Option. Needs no Accessibility permission. |
 | `dimShortcut` | `"ctrl+opt+cmd+b"` | A global shortcut (⌃⌥⌘B) that darkens every display, the built-in one and external ones, while the Mac keeps running; press it again and each display goes back to where it was, a boost included. Also in the menu as **Dim All Displays**, and `overbright dim`. `false` registers none. If `toggleShortcut` uses the same combination, that one keeps it. |
-| `dimLevel` | `0` | How far `dimShortcut` dims, in percent, 0 to 50. `0` is as dark as each display goes: the built-in backlight off, an external display at its lowest level. |
+| `dimLevel` | `0` | How far `dimShortcut` dims, in percent, 0 to 50. `0` is as dark as each display goes: the built-in backlight off, and an external display at its lowest level with a fully black picture on top (its lowest level alone still shows the picture at 10%). An external display without DDC (`"control": "software"`) keeps its backlight, so it is black but not unlit. Turn a display up during the dim and it shows what you set. |
 | `boostMethod` | `"auto"` | How the boost brightens the built-in display: `"direct"` (macOS 27.2 and later), `"overlay"` or `"classic"` (earlier). `"auto"` picks by macOS version; force one only if the boost looks wrong. See [How it works](#how-it-works). |
 | `holdHeadroom` | `true` | Direct method: keep one transparent pixel with an HDR headroom of 1.2 on screen while the boost is on, and before it, whenever the backlight is at 50% or more. A system banner (HDR content on macOS 27) then no longer makes macOS ramp the backlight, which takes the boost off the screen for about 2 seconds each time, and the boost starts at once. Without a boost it changes nothing you can see and costs 0.1 W. `false` draws nothing at all. |
 | `extraDimming` | `true` | Let external displays go below 0%, down to −90%, by darkening the picture once the backlight is at its minimum. |
@@ -213,7 +213,7 @@ overbright status --json
   "direct" : { "ceilingNits" : 1000, "rewrites" : 0, "standardNits" : 600, "targetNits" : 900 },
   "edrHeadroom" : 1,
   "externalDisplays" : [
-    { "control" : "ddc", "id" : 2, "level" : 100, "minimum" : -90, "name" : "DELL P2723DE" }
+    { "blackout" : false, "control" : "ddc", "id" : 2, "level" : 100, "minimum" : -90, "name" : "DELL P2723DE" }
   ],
   "level" : 150,
   "maxLevel" : "auto",
