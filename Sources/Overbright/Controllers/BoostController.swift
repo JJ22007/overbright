@@ -34,6 +34,11 @@ final class BoostController {
         }
     }
 
+    /// `holdHeadroom` in the config.
+    var holdHeadroom = true {
+        didSet { direct.holdsHeadroom = holdHeadroom }
+    }
+
     /// What this Mac's panel reports, for `status --json`: enough for a user
     /// on another model to send in an issue.
     var panelDiagnostics: [String: Any] {
@@ -57,6 +62,7 @@ final class BoostController {
             "systemCapNits": direct.systemCap.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
             "ceilingNits": direct.ceilingNits,
             "rewrites": direct.rewrites,
+            "holdingHeadroom": direct.isHoldingHeadroom,
         ]
     }
     private let defaults = UserDefaults.standard

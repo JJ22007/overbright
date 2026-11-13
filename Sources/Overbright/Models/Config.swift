@@ -48,6 +48,10 @@ struct Config: Equatable {
     var boostMethod: String = "auto"
     /// The direct method's ceiling in nits.
     var maxNits: Double = DirectPanel.defaultCeiling
+    /// Direct method: keep a small fixed HDR headroom on screen while the
+    /// boost is on, so system banners do not make macOS ramp the backlight.
+    /// See `HeadroomHoldService`.
+    var holdHeadroom: Bool = true
     /// End the boost when the battery falls to this percent while unplugged.
     /// nil (the default) never does.
     var lowBatteryOff: Double? = nil
@@ -63,6 +67,7 @@ struct Config: Equatable {
         "maxLevel", "keyStep", "fineKeyStep", "brightnessKeys",
         "enableOnLaunch", "showPercentage", "language", "presets",
         "externalDisplays", "externalKeys", "showHUD", "extraDimming", "boostMethod", "maxNits",
+        "holdHeadroom",
         "lowBatteryOff", "toggleShortcut"
     ]
 
@@ -123,6 +128,7 @@ struct Config: Equatable {
             }
         }
         maxNits = number("maxNits", in: dictionary, range: DirectPanel.ceilingRange, default: maxNits)
+        holdHeadroom = flag("holdHeadroom", in: dictionary, default: holdHeadroom)
         if let raw = dictionary["lowBatteryOff"], !(raw is NSNull), !(Self.isBoolean(raw) && (raw as? Bool) == false) {
             if Self.isBoolean(raw) {
                 warnings.append("\"lowBatteryOff\" must be a battery percentage or false; using false")
@@ -209,6 +215,7 @@ struct Config: Equatable {
           "extraDimming": \(extraDimming),
           "boostMethod": \(quote(boostMethod)),
           "maxNits": \(format(maxNits)),
+          "holdHeadroom": \(holdHeadroom),
           "lowBatteryOff": \(lowBatteryOff.map(format) ?? "false"),
           "toggleShortcut": \(toggleShortcut.map(quote) ?? "false"),
           "presets": \(presetBlock)

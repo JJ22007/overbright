@@ -20,11 +20,13 @@ import os
 /// ambient light, and every time HDR content appears or leaves (a system
 /// banner on macOS 27 is HDR content with a headroom of 1.2; that happened
 /// 145 times in one working day). It writes a ramp, one step per frame for one
-/// to two seconds. `maintain()` follows that ramp step by step: each time it
-/// finds macOS's values it writes the boost again, computed from the cap macOS
-/// just set (`DirectPanel.backlight`). Waiting for macOS to settle first, as
-/// earlier versions did, left the screen at standard brightness for two to
-/// three seconds at each end of every HDR appearance.
+/// to two seconds. `maintain()` leaves the backlight alone while macOS is
+/// writing and puts the boost back once macOS has been still for a quarter of
+/// a second (`DirectPacer`), computed from the cap macOS ended on
+/// (`DirectPanel.backlight`). So the screen is at macOS's own brightness for
+/// the length of each ramp. Answering every step of the ramp instead, as one
+/// build did, made the backlight alternate between the two values more than
+/// 200 times a second: the screen flashed.
 ///
 /// The values in place before the boost are kept in the defaults until they
 /// are written back, so a crash is undone at the next launch.
@@ -94,6 +96,7 @@ final class DirectPanelService {
             return false
         }
         startTimer()
+        if (readings.edrHeadroom ?? 1) > 1.02 { holdHeadroomNow() }
         return true
     }
 
@@ -114,64 +117,52 @@ final class DirectPanelService {
         return write(target)
     }
 
-    /// How long macOS's values must stay unchanged before its ramp counts as over.
-    static let settleTime: TimeInterval = 1.0
-    /// How often the backlight is checked: while macOS is writing a ramp (it
-    /// writes once per frame, every 8 ms at 120 Hz), and otherwise.
-    static let followInterval: TimeInterval = 0.002
-    static let idleInterval: TimeInterval = 0.02
+    /// How often the backlight is looked at. Nothing is written on this
+    /// clock: `DirectPacer` decides when.
+    static let pollInterval: TimeInterval = 0.02
 
-    private var lastCap: Double?
-    private var lastLevel: Double?
-    private var changedAt: TimeInterval = 0
-    private var following = false
+    private var pacer = DirectPacer()
 
-    /// Puts the boost back whenever macOS has written the backlight, at once
-    /// and from the cap macOS just set, so the screen keeps its brightness
-    /// through macOS's ramps. A backlight below what macOS allows means the
-    /// user dimmed the display; that is left for the controller, which ends
-    /// the boost.
+    /// `holdHeadroom` in the config: see `HeadroomHoldService`.
+    var holdsHeadroom = true {
+        didSet { if !holdsHeadroom { hold.close() } }
+    }
+    private let hold = HeadroomHoldService()
+    var isHoldingHeadroom: Bool { hold.isOpen }
+
+    /// Opened when macOS first takes the backlight (or HDR content is already
+    /// on screen), not when the boost starts: opening it is itself a change of
+    /// headroom, and at that moment macOS is ramping anyway.
+    private func holdHeadroomNow() {
+        guard holdsHeadroom, !hold.isOpen, let screen = DisplayLookup.builtInScreen else { return }
+        if !hold.open(on: screen) { logger.notice("headroom hold not available") }
+    }
+
+    /// Puts the boost back after macOS has written the backlight and then
+    /// left it alone, from the cap macOS ended on. Never while macOS is still
+    /// writing. A backlight below what macOS allows means the user dimmed the
+    /// display; that is left for the controller, which ends the boost.
     func maintain() {
         guard framebuffer != 0, targetNits != nil,
               let cap = Self.read(framebuffer, "BLNitsCap"),
               let current = Self.read(framebuffer, "IOMFBBrightnessLevel") else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        if lastCap != cap || lastLevel != current {
-            lastCap = cap
-            lastLevel = current
-            changedAt = now
+        let act = pacer.poll(cap: cap, level: current, written: written, now: now)
+        if pacer.pending, written != nil { holdHeadroomNow() }
+        guard act else { return }
+        // macOS's ramp is over: its cap and headroom can be trusted now.
+        let capIsOurs = written.map { abs(cap - $0) <= DirectPacer.tolerance } ?? false
+        if !capIsOurs { systemCap = cap }
+        _ = updateStandard()
+        if let systemCap, let standardNits,
+           DirectPanel.dimmed(level: current, systemCap: systemCap, standard: standardNits) {
+            pacer.applied(wrote: false, now: now)
+            return
         }
-        let capIsOurs = written.map { abs(cap - $0) <= 0.02 } ?? false
-        let levelIsOurs = written.map { abs(current - $0) <= 0.02 } ?? false
-        if !capIsOurs, systemCap.map({ abs($0 - cap) > 0.02 }) ?? true {
-            systemCap = cap
-        }
-        let quiet = now - changedAt >= Self.settleTime
-        if following, quiet {
-            // macOS's ramp is over: its headroom can be trusted now.
-            following = false
-            countedTakeover = false
-            setPace(Self.idleInterval)
-            if updateStandard() {
-                apply(level: level)
-                return
-            }
-        } else if !following, !quiet {
-            following = true
-            setPace(Self.followInterval)
-        }
-        if capIsOurs, levelIsOurs { return }
-        if !levelIsOurs, let systemCap, let standardNits,
-           DirectPanel.dimmed(level: current, systemCap: systemCap, standard: standardNits) { return }
-        apply(level: level)
-        // Counted once per takeover, not once per step of macOS's ramp.
-        if written != nil, !countedTakeover {
-            countedTakeover = true
-            rewrites += 1
-        }
+        let taken = apply(level: level)
+        pacer.applied(wrote: written != nil, taken: taken, now: now)
+        if taken, written != nil { rewrites += 1 }
     }
-
-    private var countedTakeover = false
 
     /// Reads standard white again once macOS's ramp is over. True if it changed.
     private func updateStandard() -> Bool {
@@ -189,6 +180,7 @@ final class DirectPanelService {
     func end() {
         timer?.cancel()
         timer = nil
+        hold.close()
         if framebuffer == 0 { framebuffer = PanelLightService.findBuiltInFramebuffer() }
         if framebuffer != 0 {
             _ = Self.restoreSaved(framebuffer, defaults: defaults, systemCap: systemCap, untouched: written == nil && isActive)
@@ -198,10 +190,7 @@ final class DirectPanelService {
         standardNits = nil
         systemCap = nil
         peakNits = nil
-        following = false
-        countedTakeover = false
-        lastCap = nil
-        lastLevel = nil
+        pacer = DirectPacer()
     }
 
     /// After a crash: writes back values a boost left behind.
@@ -268,13 +257,9 @@ final class DirectPanelService {
             MainActor.assumeIsolated { self?.maintain() }
         }
         timer = next
-        following = false
-        setPace(Self.idleInterval)
+        pacer = DirectPacer()
+        next.schedule(deadline: .now() + Self.pollInterval, repeating: Self.pollInterval, leeway: .milliseconds(2))
         next.resume()
-    }
-
-    private func setPace(_ interval: TimeInterval) {
-        timer?.schedule(deadline: .now() + interval, repeating: interval, leeway: .nanoseconds(0))
     }
 
     private static func read(_ entry: io_registry_entry_t, _ key: String) -> Double? {

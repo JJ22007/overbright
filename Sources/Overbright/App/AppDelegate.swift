@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let boostController = BoostController()
         boostController.directCeiling = ConfigStore.shared.config.maxNits
+        boostController.holdHeadroom = ConfigStore.shared.config.holdHeadroom
         boostController.configuredMethod = ConfigStore.shared.config.configuredBoostMethod
         boostController.onCeilingChange = { [weak self] in self?.statusController?.rebuildMenu() }
         self.boostController = boostController
@@ -124,6 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func configDidChange() {
         applyConfigToModels()
         boostController?.directCeiling = ConfigStore.shared.config.maxNits
+        boostController?.holdHeadroom = ConfigStore.shared.config.holdHeadroom
         boostController?.configuredMethod = ConfigStore.shared.config.configuredBoostMethod
         externalDisplays?.isEnabled = ConfigStore.shared.config.externalDisplays
         externalDisplays?.extraDimming = ConfigStore.shared.config.extraDimming

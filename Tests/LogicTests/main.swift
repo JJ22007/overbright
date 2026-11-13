@@ -338,6 +338,8 @@ expect(ExternalBrightness.next(from: 0, direction: .decrease, step: 6.25) == 0,
 expect(ExternalBrightness.label(-40) == "\u{2212}40%" && ExternalBrightness.label(60) == "60%",
        "levels below 0 are labelled with a minus sign")
 expect(!parsed(#"{"extraDimming": false}"#).extraDimming, "extra dimming can be turned off")
+expect(Config().holdHeadroom && !parsed(#"{"holdHeadroom": false}"#).holdHeadroom, "config: holdHeadroom is on by default and can be turned off")
+expect(DirectPanel.backlight(standard: 600, systemCap: 600 * DirectPanel.heldHeadroom, level: 1.66, ceiling: 1000, hardCeiling: 1296).map { $0 < 1296 } == true, "the held headroom leaves the top of the default scale under the hard ceiling")
 
 let externalOptions = parsed(#"{"externalDisplays": false, "externalKeys": false, "showHUD": false}"#)
 expect(!externalOptions.externalDisplays && !externalOptions.externalKeys && !externalOptions.showHUD &&
@@ -568,6 +570,89 @@ expect(standardAfter(30, headroom: 1.0) == 600, "a nonsense cap changes nothing"
 expect(DirectPanel.dimmed(level: 400, systemCap: 600, standard: 600), "400 nits under a 600 cap is dimming")
 expect(DirectPanel.dimmed(level: 300, systemCap: 720, standard: 600), "dimming under a banner's cap is still dimming")
 expect(!DirectPanel.dimmed(level: 600, systemCap: 720, standard: 600), "the first step of a banner's ramp is not dimming")
+
+// The flashing bug: macOS writes a ramp, one step per frame. A boost that
+// writes itself back after every step alternates with macOS on every frame.
+// `simulate` plays macOS's writes against a boost polled every `poll` seconds
+// and counts the boost's writes. `everyStep` is the build that flashed.
+private func simulate(macWrites: [(at: Double, nits: Double)], boost: Double, until end: Double,
+                      poll: Double, everyStep: Bool) -> (writes: Int, duringRamp: Int, final: Double) {
+    var pacer = DirectPacer()
+    var panel = boost
+    var written: Double? = boost
+    var writes = 0, duringRamp = 0, next = 0
+    let rampEnd = macWrites.last?.at ?? 0
+    var now = 0.0
+    while now <= end {
+        while next < macWrites.count, macWrites[next].at <= now {
+            panel = macWrites[next].nits
+            next += 1
+        }
+        let write: Bool
+        if everyStep {
+            write = written.map { abs(panel - $0) > DirectPacer.tolerance } ?? true
+        } else {
+            write = pacer.poll(cap: panel, level: panel, written: written, now: now)
+        }
+        if write {
+            panel = boost
+            written = boost
+            writes += 1
+            if now <= rampEnd { duringRamp += 1 }
+            pacer.applied(wrote: true, now: now)
+        }
+        now += poll
+    }
+    return (writes, duringRamp, panel)
+}
+// A banner: 600 to 720 nits over 1.5 s, one step every 8 ms.
+let bannerRamp: [(at: Double, nits: Double)] = (0...187).map { (index: Int) -> (at: Double, nits: Double) in
+    let step = Double(index)
+    return (at: 1 + step * 0.008, nits: 600 + step * 120 / 187)
+}
+let flashing = simulate(macWrites: bannerRamp, boost: 996, until: 6, poll: 0.002, everyStep: true)
+expect(flashing.writes > 150, "answering every step of macOS's ramp alternates with it on every frame (the flashing)")
+let paced = simulate(macWrites: bannerRamp, boost: 996, until: 6, poll: 0.02, everyStep: false)
+expect(paced.duringRamp == 0, "pacer: nothing is written while macOS is writing its ramp")
+expect(paced.writes == 1 && paced.final == 996, "pacer: one write puts the boost back after the ramp")
+// A slow adjustment: macOS writes every 0.3 s for a minute. The wait doubles
+// past the gap, so the two do not alternate slowly either.
+let slowSteps: [(at: Double, nits: Double)] = (0..<200).map { (index: Int) -> (at: Double, nits: Double) in
+    (at: 1 + Double(index) * 0.3, nits: 600 + Double(index % 7))
+}
+let slow = simulate(macWrites: slowSteps, boost: 996, until: 70, poll: 0.02, everyStep: false)
+expect(slow.duringRamp <= 1, "pacer: at most one write gets in between macOS's slow steps")
+expect(slow.writes <= 2 && slow.final == 996, "pacer: the boost is back once macOS stops")
+// Two banners a few seconds apart are separate takeovers, each answered once.
+let leaving: [(at: Double, nits: Double)] = bannerRamp.map { step in (at: step.at + 5, nits: 1320 - step.nits) }
+let twoBanners = bannerRamp + leaving
+let two = simulate(macWrites: twoBanners, boost: 996, until: 12, poll: 0.02, everyStep: false)
+expect(two.writes == 2 && two.final == 996, "pacer: a banner appearing and leaving is two writes")
+do {
+    var pacer = DirectPacer()
+    expect(!pacer.poll(cap: 996, level: 996, written: 996, now: 0), "pacer: the boost's own values need nothing")
+    expect(!pacer.poll(cap: 600, level: 600, written: 996, now: 1), "pacer: a takeover is not answered at once")
+    expect(!pacer.poll(cap: 600, level: 600, written: 996, now: 1.2), "pacer: nor before macOS has been still long enough")
+    expect(pacer.poll(cap: 600, level: 600, written: 996, now: 1.26), "pacer: answered after a quarter of a second of stillness")
+    pacer.applied(wrote: true, taken: false, now: 1.26)
+    expect(!pacer.poll(cap: 600, level: 600, written: 996, now: 1.3), "pacer: a write macOS did not take waits again")
+    expect(pacer.poll(cap: 600, level: 600, written: 996, now: 1.52), "pacer: and is then tried again")
+    pacer.applied(wrote: true, now: 1.52)
+    _ = pacer.poll(cap: 996, level: 996, written: 996, now: 1.54)
+    _ = pacer.poll(cap: 610, level: 610, written: 996, now: 1.8)
+    expect(pacer.settle == 0.5, "pacer: taken again within two seconds, the wait doubles")
+    expect(!pacer.poll(cap: 610, level: 610, written: 996, now: 2.2) && pacer.poll(cap: 610, level: 610, written: 996, now: 2.31), "pacer: and the longer wait is kept")
+    pacer.applied(wrote: true, now: 2.31)
+    _ = pacer.poll(cap: 996, level: 996, written: 996, now: 2.33)
+    _ = pacer.poll(cap: 600, level: 600, written: 996, now: 9)
+    expect(pacer.settle == DirectPacer.shortestSettle, "pacer: a takeover long after the write starts from the short wait")
+    // Yielded to macOS (HDR video): its changes are looked at once still, never written over in between.
+    var yielded = DirectPacer()
+    _ = yielded.poll(cap: 1600, level: 1500, written: nil, now: 0)
+    expect(yielded.poll(cap: 1600, level: 1500, written: nil, now: 0.3), "pacer: macOS's own backlight is looked at once it is still")
+    yielded.applied(wrote: false, now: 0.3)
+    expect(!yielded.poll(cap: 1600, level: 1500, written: nil, now: 0.4), "pacer: and then left alone")
+}
 expect(!DirectPanel.dimmed(level: 590, systemCap: 600, standard: 600), "a level a little behind the cap is not dimming")
 expect(!DirectPanel.dimmed(level: 1000, systemCap: 1600, standard: 600), "the level behind a fast ramp to the peak is not dimming")
 

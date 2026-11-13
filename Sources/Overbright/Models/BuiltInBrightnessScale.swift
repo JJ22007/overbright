@@ -111,6 +111,10 @@ enum BoostMethod: String, CaseIterable {
 enum DirectPanel {
     static let defaultCeiling: Double = 1000
     static let ceilingRange: ClosedRange<Double> = 700...1300
+    /// The HDR headroom kept on screen while the boost is on
+    /// (`HeadroomHoldService`): that of a system banner on macOS 27, so a
+    /// banner appearing or leaving changes nothing.
+    static let heldHeadroom: Double = 1.2
 
     static func targetNits(standard: Double, level: Float, ceiling: Double) -> Double? {
         guard standard.isFinite, standard > 50, level.isFinite, ceiling.isFinite else { return nil }
@@ -149,7 +153,7 @@ enum DirectPanel {
 
     /// Standard white once macOS has stopped changing its cap, now `systemCap`.
     /// (During its ramp the cap and the headroom both move, and nothing is
-    /// decided: the backlight follows the cap in proportion meanwhile.)
+    /// decided or written: see `DirectPacer`.)
     ///
     /// A cap with no HDR headroom is standard white itself (macOS moves it
     /// with ambient light). A cap with headroom is standard white times that
@@ -193,6 +197,76 @@ enum DirectPanel {
         guard let standard = believable(systemStandard) ?? believable(savedCap) else { return nil }
         guard let currentLevel, currentLevel.isFinite, currentLevel > standard + 1 else { return (standard, nil) }
         return (standard, standard)
+    }
+}
+
+/// When the direct boost may write the backlight again after macOS wrote it.
+///
+/// macOS writes a ramp: the cap once per frame (8 ms) and the level every
+/// 8–50 ms, for one to two seconds, whenever HDR content appears or leaves.
+/// Writing the boost back after each of those steps makes the backlight
+/// alternate between macOS's value and the boost's more than 200 times a
+/// second (measured; the screen flashes). So the boost never answers a step:
+/// it waits until macOS has left the backlight alone for `settle`, then writes
+/// once.
+///
+/// If macOS takes the backlight again within `retakeWindow` of that write, it
+/// was not done (a slow adjustment with long pauses), and the wait doubles, up
+/// to `longestSettle`, so the two never settle into a slow alternation either.
+/// A takeover later than that starts from `shortestSettle` again.
+struct DirectPacer {
+    static let shortestSettle: TimeInterval = 0.25
+    static let longestSettle: TimeInterval = 4
+    static let retakeWindow: TimeInterval = 2
+    static let tolerance: Double = 0.02
+
+    private(set) var settle = DirectPacer.shortestSettle
+    private var lastCap: Double?
+    private var lastLevel: Double?
+    private var changedAt: TimeInterval = 0
+    private var wroteAt: TimeInterval?
+    private var wasOurs = false
+    /// macOS has written values the boost has not answered yet.
+    private(set) var pending = false
+
+    /// One look at the panel. `written` is what the boost last wrote, nil
+    /// while macOS's own values are left alone. True when the boost should be
+    /// worked out and written now; the caller then reports `applied`.
+    mutating func poll(cap: Double, level: Double, written: Double?, now: TimeInterval) -> Bool {
+        let ours = written.map { abs(cap - $0) <= Self.tolerance && abs(level - $0) <= Self.tolerance } ?? false
+        let changed = cap != lastCap || level != lastLevel
+        lastCap = cap
+        lastLevel = level
+        defer { wasOurs = ours }
+        if ours {
+            pending = false
+            return false
+        }
+        if wasOurs {
+            // A takeover starts here.
+            if let wroteAt, now - wroteAt < Self.retakeWindow {
+                settle = min(settle * 2, Self.longestSettle)
+            } else {
+                settle = Self.shortestSettle
+            }
+        }
+        if changed {
+            pending = true
+            changedAt = now
+        }
+        return pending && now - changedAt >= settle
+    }
+
+    /// The caller acted on a true `poll`. `wrote` is false when it found
+    /// nothing to write (macOS's own backlight stands). `taken` is false when
+    /// macOS did not take the write: it is tried again after another wait.
+    mutating func applied(wrote: Bool, taken: Bool = true, now: TimeInterval) {
+        if !taken {
+            changedAt = now
+            return
+        }
+        pending = false
+        if wrote { wroteAt = now }
     }
 }
 

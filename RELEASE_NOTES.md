@@ -9,11 +9,13 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 
 ## Next
 
-- **Fixed: the screen dimmed for a few seconds whenever HDR content appeared or left (`direct`).** On macOS 27 a system banner is HDR content, so this could happen many times an hour: 145 times in one working day on the Mac it was found on. macOS takes the backlight over with a ramp of one to two seconds, and Overbright waited for it to settle before putting the boost back. It now puts the boost back after every step of the ramp. Measured with the backlight's own readings: the backlight was at macOS's value for 89 ms in total (3 ms at the longest), where it had been 2 to 3 seconds each time.
+- **Fixed: the screen dimmed for a few seconds whenever HDR content appeared or left (`direct`).** On macOS 27 a system banner is HDR content, so this could happen many times an hour: 145 times in one working day on the Mac it was found on. Each time, macOS takes the backlight over with a ramp of about two seconds. Overbright now keeps one transparent pixel with an HDR headroom of 1.2 on screen once the first such ramp has happened (`holdHeadroom`, on by default; `false` draws nothing): a banner then changes nothing. Measured with the backlight's own readings: after the first appearance, three more in 70 s made no change to the backlight. Holding the headroom costs 0.3 W at 166%.
+- **The boost is put back sooner after macOS adjusts the backlight, and never while it is adjusting.** It is written once, a quarter of a second after macOS stops (2 seconds of waiting and checking before). A build that was never released answered every step of macOS's ramp instead and made the screen flash; the logic tests now replay a ramp and count the writes.
 - **Fixed: with HDR content on screen the boost was too dim, and with HDR video it was darker than no boost.** macOS draws ordinary content darker by the HDR headroom, and Overbright did not allow for it: it took a banner's raised cap for a brighter room. It now reads the headroom and raises the backlight by that factor, so ordinary white stays where you set it. `maxNits` still bounds ordinary white; the backlight itself never goes above 81% of the panel's peak. Where that is not enough (HDR video at the peak), macOS's own backlight stands and the screen is at standard brightness, not below it.
 - The top of the scale no longer drops to 138% while a banner is on screen.
 - `status --json` → `direct` gains `systemCapNits`, the cap macOS itself last set.
-- While a boost is on, the backlight is checked 50 times a second (4 before), and every 2 ms while macOS is ramping.
+- While a boost is on, the backlight is checked 50 times a second (4 before).
+- `status --json` → `direct` gains `holdingHeadroom`. New config key `holdHeadroom`.
 
 ## 2.6.2
 
