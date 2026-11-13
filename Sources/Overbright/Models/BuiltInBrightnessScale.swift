@@ -111,6 +111,27 @@ enum BoostMethod: String, CaseIterable {
 enum DirectPanel {
     static let defaultCeiling: Double = 1000
     static let ceilingRange: ClosedRange<Double> = 700...1300
+    /// The HDR headroom kept on screen while the boost is on
+    /// (`HeadroomHoldService`): that of a system banner on macOS 27, so a
+    /// banner appearing or leaving changes nothing.
+    static let heldHeadroom: Double = 1.2
+
+    /// Whether that headroom should be opened ahead of a boost: in the upper
+    /// half of the backlight, from where the brightness keys reach the boost.
+    /// Opening it makes macOS ramp its cap for two seconds with ordinary white
+    /// unchanged; done ahead of time, nobody sees it, the boost then starts at
+    /// once and no banner disturbs it. Measured at full backlight without a
+    /// boost: 7.05 W with it against 6.95 W.
+    ///
+    /// It is never opened or closed while a boost is on: that would be a ramp
+    /// of its own, two seconds without the boost. A boost that started without
+    /// it gets it at the first ramp macOS makes anyway (`DirectPanelService`).
+    static let holdFromBacklight: Float = 0.5
+
+    static func holdsHeadroom(enabled: Bool, direct: Bool, backlight: Float?, suspended: Bool) -> Bool {
+        guard enabled, direct, !suspended, let backlight else { return false }
+        return backlight >= holdFromBacklight
+    }
 
     static func targetNits(standard: Double, level: Float, ceiling: Double) -> Double? {
         guard standard.isFinite, standard > 50, level.isFinite, ceiling.isFinite else { return nil }
@@ -125,15 +146,54 @@ enum DirectPanel {
         return level > 1.05 ? min(Float(level), BoostLevel.absoluteMaximum) : nil
     }
 
-    /// What to do once macOS has replaced the boost and its values have
-    /// settled. A new cap at full backlight is macOS choosing a new standard
-    /// white (ambient light, up or down): follow it and put the boost back.
-    /// A backlight below standard white is the user dimming: leave it to the
-    /// controller. The new standard is decided before that comparison, so a
-    /// darker room (720 to 600 nits) is not mistaken for dimming.
-    struct Settled: Equatable {
-        var reapply: Bool
-        var newStandard: Double?
+    /// The backlight to write, given the cap macOS itself last set.
+    ///
+    /// While HDR content is on screen macOS raises its cap to standard white
+    /// times a headroom and draws ordinary content that much darker, so
+    /// ordinary white is the backlight divided by the headroom. (Measured on a
+    /// 14" MacBook Pro, 27.2.1: with HDR open to the peak, a backlight written
+    /// to 996 nits drew 5.7 W, less than the 6.8 W of standard white.) To keep
+    /// ordinary white where the user set it, the backlight is therefore the
+    /// wanted white times that headroom.
+    ///
+    /// `ceiling` bounds ordinary white; `hardCeiling` bounds the backlight
+    /// itself. When macOS's own cap is already as high as that allows (HDR
+    /// video), the answer is macOS's cap: nothing to add, and writing less
+    /// would make the screen darker than without the boost.
+    static func backlight(standard: Double, systemCap: Double, level: Float,
+                          ceiling: Double, hardCeiling: Double) -> Double? {
+        guard let white = targetNits(standard: standard, level: level, ceiling: ceiling),
+              systemCap.isFinite, systemCap > 50, hardCeiling.isFinite else { return nil }
+        let headroom = max(systemCap / standard, 1)
+        return max(min(white * headroom, hardCeiling), systemCap)
+    }
+
+    /// Standard white once macOS has stopped changing its cap, now `systemCap`.
+    /// (During its ramp the cap and the headroom both move, and nothing is
+    /// decided or written: see `DirectPacer`.)
+    ///
+    /// A cap with no HDR headroom is standard white itself (macOS moves it
+    /// with ambient light). A cap with headroom is standard white times that
+    /// headroom. Without a headroom reading, a cap under the ceiling and well
+    /// under the peak counts as standard white, as it did before the headroom
+    /// was read.
+    static func standard(previous: Double, systemCap: Double, headroom: Double?,
+                         ceiling: Double, peak: Double?) -> Double {
+        let edrCap = (peak ?? .infinity) * PanelSupport.edrCapShare
+        guard systemCap.isFinite, systemCap > 50 else { return previous }
+        guard let headroom, headroom.isFinite, headroom > 0 else {
+            return systemCap < ceiling && systemCap < edrCap ? systemCap : previous
+        }
+        if headroom <= 1.02 { return systemCap < edrCap ? systemCap : previous }
+        let standard = systemCap / headroom
+        return standard > 50 ? standard : previous
+    }
+
+    /// Whether macOS is driving the backlight below what it allows: the user
+    /// (or macOS) dimmed the display. That is left to the controller, which
+    /// ends the boost; nothing is written over it.
+    static func dimmed(level: Double, systemCap: Double, standard: Double) -> Bool {
+        level < min(systemCap, standard) * 0.95
     }
 
     /// What to write when the boost ends (or after a crash). The cap goes back
@@ -155,18 +215,82 @@ enum DirectPanel {
         guard let currentLevel, currentLevel.isFinite, currentLevel > standard + 1 else { return (standard, nil) }
         return (standard, standard)
     }
+}
 
-    static func settled(cap: Double, level: Double, writtenCap: Double?, standard: Double?,
-                        ceiling: Double, peak: Double?) -> Settled {
-        var effectiveStandard = standard ?? 0
-        var newStandard: Double?
-        if let writtenCap, abs(cap - writtenCap) > 1, cap > 50, cap < ceiling,
-           cap < (peak ?? .infinity) * PanelSupport.edrCapShare {
-            newStandard = cap
-            effectiveStandard = cap
+/// When the direct boost may write the backlight again after macOS wrote it.
+///
+/// macOS writes a ramp: the cap once per frame (8 ms) and the level every
+/// 8–50 ms, for one to two seconds, whenever HDR content appears or leaves.
+/// Writing the boost back after each of those steps makes the backlight
+/// alternate between macOS's value and the boost's more than 200 times a
+/// second (measured; the screen flashes). So the boost never answers a step:
+/// it waits until macOS has left the backlight alone for `settle`, then writes
+/// once.
+///
+/// If macOS takes the backlight again within `retakeWindow` of that write, it
+/// was not done (a slow adjustment with long pauses), and the wait doubles, up
+/// to `longestSettle`, so the two never settle into a slow alternation either.
+/// A takeover later than that starts from `shortestSettle` again.
+struct DirectPacer {
+    static let shortestSettle: TimeInterval = 0.25
+    static let longestSettle: TimeInterval = 4
+    static let retakeWindow: TimeInterval = 2
+    static let tolerance: Double = 0.02
+
+    private(set) var settle = DirectPacer.shortestSettle
+    private var lastCap: Double?
+    private var lastLevel: Double?
+    private var changedAt: TimeInterval = 0
+    private var wroteAt: TimeInterval?
+    private var wasOurs = false
+    /// macOS has written values the boost has not answered yet.
+    private(set) var pending = false
+
+    /// One look at the panel. `written` is what the boost last wrote, nil
+    /// while macOS's own values are left alone. True when the boost should be
+    /// worked out and written now; the caller then reports `applied`.
+    mutating func poll(cap: Double, level: Double, written: Double?, now: TimeInterval) -> Bool {
+        let ours = written.map { abs(cap - $0) <= Self.tolerance && abs(level - $0) <= Self.tolerance } ?? false
+        let changed = cap != lastCap || level != lastLevel
+        lastCap = cap
+        lastLevel = level
+        defer { wasOurs = ours }
+        if ours {
+            pending = false
+            return false
         }
-        guard level >= effectiveStandard * 0.95 else { return Settled(reapply: false, newStandard: nil) }
-        return Settled(reapply: true, newStandard: newStandard)
+        if wasOurs {
+            // A takeover starts here.
+            if let wroteAt, now - wroteAt < Self.retakeWindow {
+                settle = min(settle * 2, Self.longestSettle)
+            } else {
+                settle = Self.shortestSettle
+            }
+        }
+        if changed {
+            pending = true
+            changedAt = now
+        }
+        return pending && now - changedAt >= settle
+    }
+
+    /// macOS is known to be writing (a boost starts in the middle of a ramp):
+    /// nothing is written until it has been still for `settle`.
+    mutating func waitForMacOS(now: TimeInterval) {
+        pending = true
+        changedAt = now
+    }
+
+    /// The caller acted on a true `poll`. `wrote` is false when it found
+    /// nothing to write (macOS's own backlight stands). `taken` is false when
+    /// macOS did not take the write: it is tried again after another wait.
+    mutating func applied(wrote: Bool, taken: Bool = true, now: TimeInterval) {
+        if !taken {
+            changedAt = now
+            return
+        }
+        pending = false
+        if wrote { wroteAt = now }
     }
 }
 

@@ -34,6 +34,25 @@ final class BoostController {
         }
     }
 
+    /// `holdHeadroom` in the config.
+    var holdHeadroom = true {
+        didSet {
+            direct.holdsHeadroom = holdHeadroom
+            updateHeadroomHold()
+        }
+    }
+
+    /// Opens the headroom hold ahead of the boost, or closes it
+    /// (`DirectPanel.holdsHeadroom`). Left as it is while a boost is on.
+    private func updateHeadroomHold() {
+        guard !wantedActive else { return }
+        let backlight = DisplayLookup.builtInScreen?.overbrightID.flatMap { nativeBrightness.read(displayID: $0) }
+        direct.setArmed(DirectPanel.holdsHeadroom(
+            enabled: holdHeadroom, direct: effectiveMethod == .direct,
+            backlight: backlight, suspended: !suspensionReasons.isEmpty
+        ))
+    }
+
     /// What this Mac's panel reports, for `status --json`: enough for a user
     /// on another model to send in an issue.
     var panelDiagnostics: [String: Any] {
@@ -54,8 +73,10 @@ final class BoostController {
         [
             "standardNits": direct.standardNits.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
             "targetNits": direct.targetNits.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
+            "systemCapNits": direct.systemCap.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
             "ceilingNits": direct.ceilingNits,
             "rewrites": direct.rewrites,
+            "holdingHeadroom": direct.isHoldingHeadroom,
         ]
     }
     private let defaults = UserDefaults.standard
@@ -660,9 +681,10 @@ final class BoostController {
         integrityTimer = timer
     }
 
-    /// The direct method's top follows standard white, which macOS raises in
-    /// bright surroundings (600 to 720 nits measured): 166% or 138% under a
-    /// 1000-nit ceiling.
+    /// The direct method's top follows standard white, which macOS can raise
+    /// in bright surroundings: 166% at 600 nits under a 1000-nit ceiling, less
+    /// above. (The 720 nits once taken for a bright room was a system
+    /// banner's HDR headroom; `DirectPanelService` now tells the two apart.)
     private func refreshDirectMaximum() {
         guard effectiveMethod == .direct else { return }
         let before = BoostLevel.maximum
@@ -675,6 +697,7 @@ final class BoostController {
 
     private func performIntegrityCheck() {
         refreshDirectMaximum()
+        updateHeadroomHold()
         guard wantedActive else {
             retryPendingRecovery()
             return
@@ -989,6 +1012,7 @@ final class BoostController {
             setLevel(BoostLevel.minimum)
             disable()
         }
+        defer { updateHeadroomHold() }
         return nativeBrightness.write(backlight, displayID: id)
     }
 

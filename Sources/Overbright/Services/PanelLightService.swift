@@ -19,7 +19,8 @@ final class PanelLightService {
             potentialHeadroom: Double(screen?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1),
             peakNits: entry == 0 ? nil : nits(entry, "limit_max_physical_brightness"),
             capNits: entry == 0 ? nil : nits(entry, "BLNitsCap"),
-            systemStandardNits: includeStandard ? systemStandardNits() : nil
+            systemStandardNits: includeStandard ? systemStandardNits() : nil,
+            edrHeadroom: includeStandard ? edrHeadroom() : nil
         )
     }
 
@@ -43,13 +44,24 @@ final class PanelLightService {
 
     @MainActor
     static func systemStandardNits() -> Double? {
+        coreBrightness("DisplayNitsKey")
+    }
+
+    /// CoreBrightness's `EDRHeadroom`: 1.0 without HDR content on screen.
+    @MainActor
+    static func edrHeadroom() -> Double? {
+        coreBrightness("EDRHeadroom")
+    }
+
+    @MainActor
+    private static func coreBrightness(_ key: String) -> Double? {
         let selector = NSSelectorFromString("copyPropertyForKey:")
         guard let client = brightnessClient,
               client.responds(to: selector),
-              let value = client.perform(selector, with: "DisplayNitsKey")?.takeRetainedValue() as? NSNumber
+              let value = client.perform(selector, with: key)?.takeRetainedValue() as? NSNumber
         else { return nil }
-        let nits = value.doubleValue
-        return nits.isFinite && nits > 0 ? nits : nil
+        let number = value.doubleValue
+        return number.isFinite && number > 0 ? number : nil
     }
 
     /// A 16.16 fixed-point nits value from a framebuffer, or nil.

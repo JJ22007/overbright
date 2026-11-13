@@ -17,6 +17,10 @@ struct PanelReadings: Equatable {
     var capNits: Double?
     /// CoreBrightness `DisplayNitsKey`: standard white even while EDR is open.
     var systemStandardNits: Double?
+    /// CoreBrightness `EDRHeadroom`: how far macOS has raised the cap above
+    /// standard white for HDR content on screen (1.0 = none). A system banner
+    /// on macOS 27 asks for 1.2; HDR video goes to the peak.
+    var edrHeadroom: Double? = nil
 }
 
 /// Whether a Mac can boost, and how. All XDR MacBook Pros share the same
@@ -64,14 +68,20 @@ enum PanelSupport {
         return .supported
     }
 
-    /// Standard white in nits: the cap, unless EDR has raised it to the peak,
-    /// in which case macOS's own standard luminance. nil when it cannot be told.
+    /// Standard white in nits: the cap, less the headroom macOS has opened
+    /// for HDR content (a cap of 720 with a headroom of 1.2 is 600). Where the
+    /// headroom cannot be read and EDR has raised the cap to the peak, macOS's
+    /// own standard luminance. nil when it cannot be told.
     static func standardWhite(_ readings: PanelReadings) -> Double? {
         func valid(_ value: Double?) -> Double? {
             guard let value, value.isFinite, value > 50 else { return nil }
             return value
         }
         guard let cap = valid(readings.capNits) else { return nil }
+        if let headroom = readings.edrHeadroom, headroom.isFinite, headroom > 1.02,
+           let standard = valid(cap / headroom) {
+            return standard
+        }
         guard let peak = valid(readings.peakNits), cap >= peak * edrCapShare else { return cap }
         guard let system = valid(readings.systemStandardNits), system < peak * edrCapShare else { return nil }
         return system
