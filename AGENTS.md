@@ -2,6 +2,8 @@
 
 Instructions for AI coding agents working in this repository. Humans are welcome to read it too.
 
+You are the owner and long-term maintainer of this codebase, and its design is up to you.
+
 ## What this is
 
 Overbright is a macOS menu bar app that raises a built-in XDR display above 100% brightness. On macOS 27.2+ it does so by default by writing the panel's backlight cap and level directly (`direct`: nothing is drawn on screen). The fallbacks open EDR headroom and lift ordinary content into it: a multiplying HDR layer on 27.2+ (`overlay`), the gamma table before (`classic`). It is intentionally small so that a person can fork it and have an agent reshape it into their own tool. Favor small, readable changes over abstractions.
