@@ -7,7 +7,7 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 - Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
 - To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
-## Next
+## 2.6.3
 
 - **Fixed: the screen dimmed for a few seconds whenever HDR content appeared or left (`direct`).** On macOS 27 a system banner is HDR content, so this could happen many times an hour: 145 times in one working day on the Mac it was found on. Each time, macOS takes the backlight over with a ramp of about two seconds. Overbright now keeps one transparent pixel with an HDR headroom of 1.2 on screen, during the boost and before it whenever the backlight is at 50% or more (`holdHeadroom`, on by default; `false` draws nothing): a banner then changes nothing. Measured with the backlight's own readings: the boost came on in one write, and two appearances in the next 40 s made no change to the backlight. Holding the headroom costs 0.3 W at 166% and 0.1 W at 100% without a boost.
 - **Fixed: turning the boost on while macOS was adjusting the backlight could fail** (an error, or a fall back to `overlay`). The boost now waits for macOS to finish and then starts. A level changed during an adjustment is applied when it ends, not written into it.
