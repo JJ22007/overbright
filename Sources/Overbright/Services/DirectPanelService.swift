@@ -90,19 +90,39 @@ final class DirectPanelService {
         written = nil
         rewrites = 0
         self.level = level
-        // macOS may be in the middle of a ramp and write over the first try.
-        guard (0..<3).contains(where: { _ in apply(level: level) }) else {
-            end()
-            return false
+        pacer = DirectPacer()
+        if macOSIsWriting() {
+            // In the middle of a ramp (the hold was opened a moment ago, or a
+            // banner is arriving): a write now would show for one frame and
+            // be gone. `maintain()` writes once macOS is done.
+            guard let target = DirectPanel.backlight(standard: standard, systemCap: cap, level: level,
+                                                     ceiling: ceilingNits, hardCeiling: hardCeiling) else {
+                end()
+                return false
+            }
+            targetNits = target
+            pacer.waitForMacOS(now: ProcessInfo.processInfo.systemUptime)
+        } else {
+            guard (0..<3).contains(where: { _ in applyNow() }) else {
+                end()
+                return false
+            }
         }
         startTimer()
         if (readings.edrHeadroom ?? 1) > 1.02 { holdHeadroomNow() }
         return true
     }
 
+    /// A new level from the user. While macOS is writing a ramp it is only
+    /// remembered: `maintain()` writes it when macOS is done.
     @discardableResult
     func apply(level newLevel: Float) -> Bool {
         level = newLevel
+        if pacer.pending, isActive { return true }
+        return applyNow()
+    }
+
+    private func applyNow() -> Bool {
         guard framebuffer != 0, let standardNits, let systemCap,
               let target = DirectPanel.backlight(standard: standardNits, systemCap: systemCap, level: level,
                                                  ceiling: ceilingNits, hardCeiling: hardCeiling)
@@ -130,9 +150,23 @@ final class DirectPanelService {
     private let hold = HeadroomHoldService()
     var isHoldingHeadroom: Bool { hold.isOpen }
 
-    /// Opened when macOS first takes the backlight (or HDR content is already
-    /// on screen), not when the boost starts: opening it is itself a change of
-    /// headroom, and at that moment macOS is ramping anyway.
+    /// The controller opens the hold ahead of the boost, at full backlight
+    /// (`DirectPanel.holdsHeadroom`), and closes it when the backlight comes
+    /// down. `end()` leaves an armed hold open.
+    private var armed = false
+
+    func setArmed(_ wanted: Bool) {
+        guard wanted != armed else { return }
+        armed = wanted
+        if wanted {
+            holdHeadroomNow()
+        } else if !isActive {
+            hold.close()
+        }
+    }
+
+    /// Also opened when macOS first takes the backlight of a boost that was
+    /// not armed: at that moment macOS is ramping anyway.
     private func holdHeadroomNow() {
         guard holdsHeadroom, !hold.isOpen, let screen = DisplayLookup.builtInScreen else { return }
         if !hold.open(on: screen) { logger.notice("headroom hold not available") }
@@ -159,7 +193,7 @@ final class DirectPanelService {
             pacer.applied(wrote: false, now: now)
             return
         }
-        let taken = apply(level: level)
+        let taken = applyNow()
         pacer.applied(wrote: written != nil, taken: taken, now: now)
         if taken, written != nil { rewrites += 1 }
     }
@@ -176,11 +210,19 @@ final class DirectPanelService {
         return true
     }
 
+    /// Whether macOS changes the backlight from one frame to the next.
+    private func macOSIsWriting() -> Bool {
+        guard let first = Self.read(framebuffer, "BLNitsCap") else { return false }
+        usleep(20_000)
+        guard let second = Self.read(framebuffer, "BLNitsCap") else { return false }
+        return abs(second - first) > DirectPacer.tolerance
+    }
+
     /// Writes back the values from before the boost.
     func end() {
         timer?.cancel()
         timer = nil
-        hold.close()
+        if !armed { hold.close() }
         if framebuffer == 0 { framebuffer = PanelLightService.findBuiltInFramebuffer() }
         if framebuffer != 0 {
             _ = Self.restoreSaved(framebuffer, defaults: defaults, systemCap: systemCap, untouched: written == nil && isActive)
@@ -257,7 +299,6 @@ final class DirectPanelService {
             MainActor.assumeIsolated { self?.maintain() }
         }
         timer = next
-        pacer = DirectPacer()
         next.schedule(deadline: .now() + Self.pollInterval, repeating: Self.pollInterval, leeway: .milliseconds(2))
         next.resume()
     }

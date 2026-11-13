@@ -116,6 +116,23 @@ enum DirectPanel {
     /// banner appearing or leaving changes nothing.
     static let heldHeadroom: Double = 1.2
 
+    /// Whether that headroom should be opened ahead of a boost: in the upper
+    /// half of the backlight, from where the brightness keys reach the boost.
+    /// Opening it makes macOS ramp its cap for two seconds with ordinary white
+    /// unchanged; done ahead of time, nobody sees it, the boost then starts at
+    /// once and no banner disturbs it. Measured at full backlight without a
+    /// boost: 7.05 W with it against 6.95 W.
+    ///
+    /// It is never opened or closed while a boost is on: that would be a ramp
+    /// of its own, two seconds without the boost. A boost that started without
+    /// it gets it at the first ramp macOS makes anyway (`DirectPanelService`).
+    static let holdFromBacklight: Float = 0.5
+
+    static func holdsHeadroom(enabled: Bool, direct: Bool, backlight: Float?, suspended: Bool) -> Bool {
+        guard enabled, direct, !suspended, let backlight else { return false }
+        return backlight >= holdFromBacklight
+    }
+
     static func targetNits(standard: Double, level: Float, ceiling: Double) -> Double? {
         guard standard.isFinite, standard > 50, level.isFinite, ceiling.isFinite else { return nil }
         return min(standard * Double(max(level, 1)), max(ceiling, standard))
@@ -255,6 +272,13 @@ struct DirectPacer {
             changedAt = now
         }
         return pending && now - changedAt >= settle
+    }
+
+    /// macOS is known to be writing (a boost starts in the middle of a ramp):
+    /// nothing is written until it has been still for `settle`.
+    mutating func waitForMacOS(now: TimeInterval) {
+        pending = true
+        changedAt = now
     }
 
     /// The caller acted on a true `poll`. `wrote` is false when it found

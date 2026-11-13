@@ -36,7 +36,21 @@ final class BoostController {
 
     /// `holdHeadroom` in the config.
     var holdHeadroom = true {
-        didSet { direct.holdsHeadroom = holdHeadroom }
+        didSet {
+            direct.holdsHeadroom = holdHeadroom
+            updateHeadroomHold()
+        }
+    }
+
+    /// Opens the headroom hold ahead of the boost, or closes it
+    /// (`DirectPanel.holdsHeadroom`). Left as it is while a boost is on.
+    private func updateHeadroomHold() {
+        guard !wantedActive else { return }
+        let backlight = DisplayLookup.builtInScreen?.overbrightID.flatMap { nativeBrightness.read(displayID: $0) }
+        direct.setArmed(DirectPanel.holdsHeadroom(
+            enabled: holdHeadroom, direct: effectiveMethod == .direct,
+            backlight: backlight, suspended: !suspensionReasons.isEmpty
+        ))
     }
 
     /// What this Mac's panel reports, for `status --json`: enough for a user
@@ -683,6 +697,7 @@ final class BoostController {
 
     private func performIntegrityCheck() {
         refreshDirectMaximum()
+        updateHeadroomHold()
         guard wantedActive else {
             retryPendingRecovery()
             return
@@ -997,6 +1012,7 @@ final class BoostController {
             setLevel(BoostLevel.minimum)
             disable()
         }
+        defer { updateHeadroomHold() }
         return nativeBrightness.write(backlight, displayID: id)
     }
 

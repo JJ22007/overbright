@@ -338,6 +338,13 @@ expect(ExternalBrightness.next(from: 0, direction: .decrease, step: 6.25) == 0,
 expect(ExternalBrightness.label(-40) == "\u{2212}40%" && ExternalBrightness.label(60) == "60%",
        "levels below 0 are labelled with a minus sign")
 expect(!parsed(#"{"extraDimming": false}"#).extraDimming, "extra dimming can be turned off")
+expect(DirectPanel.holdsHeadroom(enabled: true, direct: true, backlight: 1, suspended: false), "the headroom is held at full backlight, before the boost")
+expect(DirectPanel.holdsHeadroom(enabled: true, direct: true, backlight: 0.5, suspended: false), "and from half backlight up")
+expect(!DirectPanel.holdsHeadroom(enabled: true, direct: true, backlight: 0.4, suspended: false), "not in the lower half")
+expect(!DirectPanel.holdsHeadroom(enabled: true, direct: true, backlight: nil, suspended: false), "not without a backlight reading")
+expect(!DirectPanel.holdsHeadroom(enabled: false, direct: true, backlight: 1, suspended: false), "never with holdHeadroom off")
+expect(!DirectPanel.holdsHeadroom(enabled: true, direct: false, backlight: 1, suspended: false), "only for the direct method")
+expect(!DirectPanel.holdsHeadroom(enabled: true, direct: true, backlight: 1, suspended: true), "not while the display sleeps")
 expect(Config().holdHeadroom && !parsed(#"{"holdHeadroom": false}"#).holdHeadroom, "config: holdHeadroom is on by default and can be turned off")
 expect(DirectPanel.backlight(standard: 600, systemCap: 600 * DirectPanel.heldHeadroom, level: 1.66, ceiling: 1000, hardCeiling: 1296).map { $0 < 1296 } == true, "the held headroom leaves the top of the default scale under the hard ceiling")
 
@@ -646,6 +653,12 @@ do {
     _ = pacer.poll(cap: 996, level: 996, written: 996, now: 2.33)
     _ = pacer.poll(cap: 600, level: 600, written: 996, now: 9)
     expect(pacer.settle == DirectPacer.shortestSettle, "pacer: a takeover long after the write starts from the short wait")
+    // A boost that starts in the middle of a ramp writes nothing until the ramp is over.
+    var starting = DirectPacer()
+    starting.waitForMacOS(now: 0)
+    expect(starting.pending, "pacer: a boost starting in a ramp waits (and a new level is not written meanwhile)")
+    expect(!starting.poll(cap: 610, level: 610, written: nil, now: 0.02) && !starting.poll(cap: 620, level: 620, written: nil, now: 0.2), "pacer: it writes nothing while the ramp goes on")
+    expect(starting.poll(cap: 620, level: 620, written: nil, now: 0.46), "pacer: and starts once macOS is still")
     // Yielded to macOS (HDR video): its changes are looked at once still, never written over in between.
     var yielded = DirectPacer()
     _ = yielded.poll(cap: 1600, level: 1500, written: nil, now: 0)
