@@ -4,6 +4,7 @@
 //   overbright on | off | toggle    switch the boost
 //   overbright set <percent>        100 turns it off, 101-160 boosts
 //   overbright up | down            one brightness-key step
+//   overbright dim                  dim every display, or put them back
 //   overbright preset <name>        apply a preset from the config
 //   overbright presets              list the presets
 //   overbright displays             list external displays
@@ -20,7 +21,7 @@ import AppKit
 
 enum CLI {
     static let commands: Set<String> = [
-        "status", "on", "off", "toggle", "set", "up", "down", "preset", "presets",
+        "status", "on", "off", "toggle", "set", "up", "down", "dim", "preset", "presets",
         "displays", "display", "key", "report", "mcp",
         "config", "check", "version", "help", "--help", "-h", "--version", "--check"
     ]
@@ -35,6 +36,8 @@ enum CLI {
       overbright set <percent>       one scale for the built-in display: 0-100 is
                                      the system backlight, 101-160 the boost
       overbright up | down           one step along that scale
+      overbright dim                 dim every display to "dimLevel"; again
+                                     puts each one back where it was
       overbright key up|down [--fine]
                                      exactly what F1/F2 do, indicator included
       overbright key up|down --real [--control]
@@ -184,6 +187,9 @@ final class CommandServer {
     private var token: String?
     /// The app's F1/F2 handler, for `overbright key`.
     var keyHandler: ((BrightnessKeyDirection, Bool) -> Double?)?
+    /// `overbright dim`: the same press as `dimShortcut`.
+    var dimHandler: (() -> [String: Double])?
+    var isDimmed: (() -> Bool)?
 
     init(
         boostController: BoostController,
@@ -290,6 +296,10 @@ final class CommandServer {
         case "up", "down":
             let direction: BrightnessKeyDirection = command == "up" ? .increase : .decrease
             _ = boostController.stepScale(direction, step: config.keyStep)
+            settle(finish)
+
+        case "dim":
+            _ = dimHandler?()
             settle(finish)
 
         case "key":
@@ -475,6 +485,7 @@ final class CommandServer {
             "configProblems": ConfigStore.shared.problems,
             "scale": boostController.scalePercent.map { ($0 * 100).rounded() / 100 } ?? NSNull(),
             "scaleTop": boostController.scaleTop,
+            "dimmed": isDimmed?() ?? false,
             "boostMethod": boostController.effectiveMethod.rawValue,
             "overlayMaxFrameGap": (boostController.overlayMaxFrameGap * 1000).rounded() / 1000,
             "mainThreadMaxGap": (boostController.mainThreadMaxGap * 1000).rounded() / 1000,

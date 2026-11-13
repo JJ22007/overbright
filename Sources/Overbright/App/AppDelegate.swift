@@ -5,6 +5,7 @@ import Darwin
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private enum DefaultsKey {
         static let brightnessKeysPromptedBuild = "brightnessKeysPromptedBuild"
+        static let dimAll = "dimAllEntries"
     }
 
     private var instanceLock: InstanceLock?
@@ -20,7 +21,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var brightnessKeysWereRunning = false
     private let batteryMonitor = BatteryMonitor()
     private var lastBattery: LowBattery.Reading?
-    private let shortcutService = ShortcutService()
+    private let shortcutService = ShortcutService(id: 1)
+    private let dimShortcutService = ShortcutService(id: 2)
+    private var dimAll = DimAll(
+        stored: UserDefaults.standard.dictionary(forKey: DefaultsKey.dimAll) as? [String: [Double]] ?? [:]
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let instanceLock = InstanceLock.acquire() else {
@@ -65,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             externalDisplays: externalDisplays
         )
         self.statusController = statusController
+        statusController.dimHandler = { [weak self] in self?.toggleDimAll() }
+        statusController.isDimmed = dimAll.isDimmed
         externalDisplays.onListChange = { [weak statusController] in
             statusController?.rebuildMenu()
         }
@@ -83,6 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         commandServer.keyHandler = { [weak self] direction, fine in
             self?.handleBuiltInKey(direction, fineGrained: fine)
         }
+        commandServer.dimHandler = { [weak self] in self?.toggleDimAll() ?? [:] }
+        commandServer.isDimmed = { [weak self] in self?.dimAll.isDimmed ?? false }
         commandServer.start()
         self.commandServer = commandServer
 
@@ -93,6 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         batteryMonitor.onChange = { [weak self] reading in self?.batteryDidChange(reading) }
         shortcutService.onPress = { [weak self] in self?.boostController?.toggle() }
+        dimShortcutService.onPress = { [weak self] in self?.toggleDimAll() }
         applyAutomation()
 
         installLifecycleObservers()
@@ -136,7 +146,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusController?.rebuildMenu()
     }
 
-    /// `lowBatteryOff` and `toggleShortcut`: both off unless configured.
+    /// `lowBatteryOff` and `toggleShortcut` are off unless configured;
+    /// `dimShortcut` is on unless turned off.
     private func applyAutomation() {
         let config = ConfigStore.shared.config
         if config.lowBatteryOff != nil {
@@ -149,6 +160,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !shortcutService.register(shortcut), let text = config.toggleShortcut {
             NSLog("Overbright: macOS refused the shortcut \(text); another app may use it")
         }
+        let dimShortcut = config.dimShortcut.flatMap(Shortcut.parse)
+        if !dimShortcutService.register(dimShortcut), let text = config.dimShortcut {
+            NSLog("Overbright: macOS refused the shortcut \(text); another app may use it")
+        }
+    }
+
+    /// `dimShortcut`, the menu item and `overbright dim`: every display down
+    /// to `dimLevel`, or back where it was. Returns the levels it wrote.
+    ///
+    /// The built-in display moves along its one scale, so a boost ends on the
+    /// way down and comes back on the way up, each through the same single
+    /// write as a brightness key.
+    @discardableResult
+    func toggleDimAll() -> [String: Double] {
+        guard let boostController else { return [:] }
+        let config = ConfigStore.shared.config
+        var current: [String: Double] = [:]
+        var minimums: [String: Double] = [:]
+        if let percent = boostController.scalePercent {
+            current[DimAll.builtInKey] = percent
+        }
+        for display in externalDisplays?.displays ?? [] {
+            current[String(display.id)] = display.level
+            minimums[String(display.id)] = display.minimum
+        }
+
+        var written = dimAll.press(current: current, minimums: minimums, dimLevel: config.dimLevel)
+        for (key, level) in written {
+            if key == DimAll.builtInKey {
+                if boostController.setScale(level) {
+                    if config.showHUD { scaleHUD.show(percent: level, top: boostController.scaleTop) }
+                } else {
+                    dimAll.forget(key)
+                    written[key] = nil
+                }
+            } else if let id = CGDirectDisplayID(key), let externalDisplays {
+                externalDisplays.setLevel(level, for: id)
+                if config.showHUD, let display = externalDisplays.displays.first(where: { $0.id == id }) {
+                    hud?.show(display)
+                }
+            }
+        }
+        UserDefaults.standard.set(dimAll.stored, forKey: DefaultsKey.dimAll)
+        statusController?.isDimmed = dimAll.isDimmed
+        return written
     }
 
     private func batteryDidChange(_ reading: LowBattery.Reading) {

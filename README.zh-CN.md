@@ -152,6 +152,8 @@ DDC/CI 需要 Apple 芯片的 Mac，Intel Mac 上所有副屏都走软件调暗�
 | `maxNits` | `1000` | direct 方式的上限，单位尼特，700 到 1300。1000 是全屏能长时间保持的亮度；再往上，面板自己的过热保护会在几秒内把背光压下来。 |
 | `lowBatteryOff` | `false` | 电量百分比，5 到 95。没插电、电量降到这个值时，关掉增亮一次；之后你再打开，它不会再关。 |
 | `toggleShortcut` | `false` | 开关增亮的全局快捷键，比如 `"ctrl+opt+cmd+b"`：一个字母、数字、F 键或 `space`，再加 Command、Control 或 Option。不需要辅助功能权限。 |
+| `dimShortcut` | `"ctrl+opt+cmd+b"` | 全局快捷键（⌃⌥⌘B）：把所有显示器（内置屏和外接屏）调到最暗，电脑照常运行；再按一次，每块屏回到原来的亮度，增亮也一起回来。菜单里的 **调暗所有显示器** 和命令 `overbright dim` 是同一个动作。设成 `false` 就不注册。如果 `toggleShortcut` 用了同一个组合键，组合键归它。 |
+| `dimLevel` | `0` | `dimShortcut` 调到多暗，百分比，0 到 50。`0` 是每块屏能到的最暗：内置屏背光关闭，外接屏到它的最低亮度。 |
 | `boostMethod` | `"auto"` | 增亮的实现方式：`"direct"`（macOS 27.2 及以后）、`"overlay"` 或 `"classic"`（更早的版本）。`"auto"` 按系统版本自动选择；只有增亮看起来不对时才需要手动指定。见[工作原理](#工作原理)。 |
 | `holdHeadroom` | `true` | direct 方式：增亮期间，以及增亮之前背光在 50% 或以上时，在屏幕上保留一个透明像素，HDR 余量为 1.2。这样系统横幅（在 macOS 27 上算 HDR 内容）就不会再让 macOS 做背光渐变（每次渐变会让增亮离开屏幕约 2 秒），增亮也能立刻生效。不增亮时看不出任何变化，多用 0.1 W。设为 `false` 则什么都不画。 |
 | `extraDimming` | `true` | 允许副屏低于 0%（最低 −90%）：背光到最低后，再把画面压暗。 |
@@ -186,6 +188,7 @@ overbright status            # off 125%
 overbright set 140           # on 140%（增亮）
 overbright set 50            # 背光 50%，关闭增亮
 overbright up                # 在刻度上亮一档
+overbright dim               # 调暗所有显示器；再运行一次恢复原样
 overbright key down          # 和按 F1 完全一样，包括指示框
 overbright preset 户外        # 按名字或前缀匹配预设
 overbright off               # 回到标准亮度

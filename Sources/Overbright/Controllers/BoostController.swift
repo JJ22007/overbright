@@ -232,6 +232,9 @@ final class BoostController {
         }
     }
 
+    /// `setScale` raised the system backlight for the boost it is about to start.
+    private var backlightJustRaised = false
+
     func toggle() {
         if wantedActive {
             disable()
@@ -305,12 +308,41 @@ final class BoostController {
             defaults.synchronize()
         }
 
+        let raised = backlightJustRaised
+            || (raiseBacklight && (nativeBrightness.read(displayID: displayID) ?? 1) < 0.999)
+        backlightJustRaised = false
         guard !raiseBacklight || nativeBrightness.write(1, displayID: displayID) else {
             failActivation(L10n.tr("Could not set the system backlight level", "无法设置系统背光亮度"))
             return
         }
         backlightMonitoringEnabled = true
         lastObservedBacklight = nativeBrightness.read(displayID: displayID)
+        if raised {
+            // The panel is still on its way up; its readings are not the
+            // standard ones yet. See `BacklightSettle`.
+            startWhenBacklightSettles(BacklightSettle(), generation: generation, screen: screen, displayID: displayID)
+        } else {
+            startNow(generation: generation, screen: screen, displayID: displayID, readings: readings)
+        }
+    }
+
+    private func startWhenBacklightSettles(
+        _ settle: BacklightSettle, generation: Int, screen: NSScreen, displayID: CGDirectDisplayID
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + BacklightSettle.interval) { [weak self] in
+            guard let self, generation == self.engagementGeneration, self.wantedActive,
+                  self.state == .engaging, self.suspensionReasons.isEmpty else { return }
+            var settle = settle
+            let readings = PanelLightService.readings()
+            if settle.ready(cap: readings.capNits, now: ProcessInfo.processInfo.systemUptime) {
+                self.startNow(generation: generation, screen: screen, displayID: displayID, readings: readings)
+            } else {
+                self.startWhenBacklightSettles(settle, generation: generation, screen: screen, displayID: displayID)
+            }
+        }
+    }
+
+    private func startNow(generation: Int, screen: NSScreen, displayID: CGDirectDisplayID, readings: PanelReadings) {
         guard startBoost(on: screen, displayID: displayID, readings: readings) else {
             failActivation(L10n.tr("Could not start the boost on this display", "无法在此屏幕上开启增亮"))
             return
@@ -1002,6 +1034,7 @@ final class BoostController {
             } else {
                 if let current = nativeBrightness.read(displayID: id), current < 0.999 {
                     nativeBrightness.write(1, displayID: id)
+                    backlightJustRaised = true
                 }
                 setLevel(boost)
                 enable(raiseBacklight: false)

@@ -156,6 +156,8 @@ The config lives at `~/.config/overbright/config.json`. Open it from the menu wi
 | `maxNits` | `1000` | Ceiling of the direct method, in nits, from 700 to 1300. 1000 is what the panel holds across the whole screen; above it the panel's own thermal limit pulls the backlight down within seconds. |
 | `lowBatteryOff` | `false` | A battery percentage, 5 to 95. When the battery falls to it while unplugged, the boost ends once; turn it back on and it stays on. |
 | `toggleShortcut` | `false` | A global shortcut that switches the boost, such as `"ctrl+opt+cmd+b"`: a letter, digit, F-key or `space`, with Command, Control or Option. Needs no Accessibility permission. |
+| `dimShortcut` | `"ctrl+opt+cmd+b"` | A global shortcut (⌃⌥⌘B) that darkens every display, the built-in one and external ones, while the Mac keeps running; press it again and each display goes back to where it was, a boost included. Also in the menu as **Dim All Displays**, and `overbright dim`. `false` registers none. If `toggleShortcut` uses the same combination, that one keeps it. |
+| `dimLevel` | `0` | How far `dimShortcut` dims, in percent, 0 to 50. `0` is as dark as each display goes: the built-in backlight off, an external display at its lowest level. |
 | `boostMethod` | `"auto"` | How the boost brightens the built-in display: `"direct"` (macOS 27.2 and later), `"overlay"` or `"classic"` (earlier). `"auto"` picks by macOS version; force one only if the boost looks wrong. See [How it works](#how-it-works). |
 | `holdHeadroom` | `true` | Direct method: keep one transparent pixel with an HDR headroom of 1.2 on screen while the boost is on, and before it, whenever the backlight is at 50% or more. A system banner (HDR content on macOS 27) then no longer makes macOS ramp the backlight, which takes the boost off the screen for about 2 seconds each time, and the boost starts at once. Without a boost it changes nothing you can see and costs 0.1 W. `false` draws nothing at all. |
 | `extraDimming` | `true` | Let external displays go below 0%, down to −90%, by darkening the picture once the backlight is at its minimum. |
@@ -190,6 +192,7 @@ overbright status            # off 125%
 overbright set 140           # on 140% (the boost)
 overbright set 50            # the backlight at 50%, boost off
 overbright up                # one step along the scale
+overbright dim               # darken every display; again puts each one back
 overbright key down          # exactly what F1 does, indicator included
 overbright preset outdoors   # match a preset by name or prefix
 overbright off               # back to standard brightness

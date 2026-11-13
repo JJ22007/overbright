@@ -7,6 +7,11 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 - Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
 - To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
+## Unreleased
+
+- **New: ⌃⌥⌘B darkens every display, and pressed again puts each one back** (`dimShortcut`, on by default; `false` turns it off). The built-in display's backlight goes off and external displays go to their lowest level, while the Mac keeps running: for a Mac you are using over screen sharing, or a screen you want dark without sleep. A boost comes back with the brightness. Also **Dim All Displays** in the menu and `overbright dim`; `dimLevel` (0 to 50) picks a level other than dark. A display you turned up yourself in the meantime is left alone. `status --json` gains `dimmed`.
+- **Fixed: a boost started from a very dim screen fell back to `overlay`** (a white flash, and a scale that read far above 166%). Below about 8% the panel's readings do not say what standard white is, and the boost started before the backlight had come up. It now waits until the backlight is steady (a quarter of a second, usually) and then starts with `direct`. Measured from a dark screen to 125%: 0 → 720 → 900 nits, no step back.
+
 ## 2.6.3
 
 - **Fixed: the screen dimmed for a few seconds whenever HDR content appeared or left (`direct`).** On macOS 27 a system banner is HDR content, so this could happen many times an hour: 145 times in one working day on the Mac it was found on. Each time, macOS takes the backlight over with a ramp of about two seconds. Overbright now keeps one transparent pixel with an HDR headroom of 1.2 on screen, during the boost and before it whenever the backlight is at 50% or more (`holdHeadroom`, on by default; `false` draws nothing): a banner then changes nothing. Measured with the backlight's own readings: the boost came on in one write, and two appearances in the next 40 s made no change to the backlight. Holding the headroom costs 0.3 W at 166% and 0.1 W at 100% without a boost.

@@ -57,6 +57,14 @@ struct Shortcut: Equatable {
         return codes
     }()
 
+    /// The key's own character ("b", "5"), for a menu item to show the
+    /// shortcut. nil for keys a menu cannot show this way (F-keys, space).
+    static func menuKey(_ text: String) -> String? {
+        guard parse(text) != nil else { return nil }
+        let parts = text.lowercased().split(separator: "+").map { $0.trimmingCharacters(in: .whitespaces) }
+        return parts.first { $0.count == 1 && modifierNames[$0] == nil && keyCodes[$0] != nil }
+    }
+
     /// Parses "ctrl+opt+cmd+b". Needs exactly one key and at least one of
     /// Command, Control or Option, so it never takes an ordinary key away.
     static func parse(_ text: String) -> Shortcut? {
@@ -74,5 +82,80 @@ struct Shortcut: Equatable {
         }
         guard let key, modifiers & (command | control | option) != 0 else { return nil }
         return Shortcut(keyCode: key, modifiers: modifiers)
+    }
+}
+
+/// `dimShortcut`: one press takes every display down to `dimLevel` (by
+/// default all the way: the screens go dark while the Mac keeps running), the
+/// next press puts each one back where it was. Levels are percentages on each
+/// display's own scale (the built-in display's runs to 160 with the boost).
+struct DimAll: Equatable {
+    static let defaultShortcut = "ctrl+opt+cmd+b"
+    static let defaultLevel = 0.0
+    static let levelRange: ClosedRange<Double> = 0...50
+    static let builtInKey = "builtin"
+    /// A display this close to the dim level is already dim; it is left alone.
+    static let tolerance = 1.0
+
+    struct Entry: Equatable {
+        /// Where the display was before the press.
+        var before: Double
+        /// Where the press left it.
+        var dimmed: Double
+    }
+
+    private(set) var entries: [String: Entry] = [:]
+
+    var isDimmed: Bool { !entries.isEmpty }
+
+    init() {}
+
+    /// One press. `current` is every display's level now; the result is the
+    /// levels to write, by display.
+    ///
+    /// A dimmed display goes back to its earlier level only while it is still
+    /// nearer the dim level than that earlier level: one the user has turned
+    /// up since is theirs and stays. If none is still dim, the earlier levels
+    /// are forgotten and the press dims again.
+    mutating func press(
+        current: [String: Double],
+        minimums: [String: Double] = [:],
+        dimLevel: Double
+    ) -> [String: Double] {
+        var restore: [String: Double] = [:]
+        for (key, entry) in entries {
+            guard let level = current[key], level < (entry.before + entry.dimmed) / 2 else { continue }
+            restore[key] = entry.before
+        }
+        entries = [:]
+        if !restore.isEmpty { return restore }
+
+        var dim: [String: Double] = [:]
+        for (key, level) in current {
+            // 0 is "as dark as it goes": the backlight off on the built-in
+            // display, an external display's own lowest level.
+            let floor = minimums[key] ?? 0
+            let target = dimLevel <= 0 ? floor : max(dimLevel, floor)
+            guard level > target + Self.tolerance else { continue }
+            entries[key] = Entry(before: level, dimmed: target)
+            dim[key] = target
+        }
+        return dim
+    }
+
+    /// The display could not be written to, so there is nothing to put back.
+    mutating func forget(_ key: String) {
+        entries[key] = nil
+    }
+
+    /// For UserDefaults, so a restart between the two presses loses nothing.
+    var stored: [String: [Double]] {
+        entries.mapValues { [$0.before, $0.dimmed] }
+    }
+
+    init(stored: [String: [Double]]) {
+        for (key, pair) in stored where pair.count == 2 && pair.allSatisfy(\.isFinite) {
+            entries[key] = Entry(before: pair[0], dimmed: pair[1])
+        }
     }
 }

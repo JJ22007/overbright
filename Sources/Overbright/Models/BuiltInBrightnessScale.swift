@@ -323,3 +323,35 @@ struct EDRWhiteCorrection {
         return 1 + (full - 1) * progress
     }
 }
+
+/// A boost that starts right after the system backlight was raised (from a
+/// dim screen straight to a boosted level) has to wait for the panel to get
+/// there: until it does the cap is still the old, low one, standard white
+/// cannot be told from it, and the direct method would be passed over.
+/// Feed it the cap every `interval`; it says when the boost may start.
+struct BacklightSettle {
+    static let interval: TimeInterval = 0.05
+    /// This many readings in a row without a change: macOS is done.
+    static let steadyReadings = 5
+    /// Start anyway after this long; the methods then decide for themselves.
+    static let timeout: TimeInterval = 4
+    static let tolerance = 0.5
+
+    private var last: Double?
+    private var steady = 0
+    private var started: TimeInterval?
+
+    /// True once the boost may start.
+    mutating func ready(cap: Double?, now: TimeInterval) -> Bool {
+        guard let cap, cap.isFinite else { return true }
+        let began = started ?? now
+        started = began
+        if let last, abs(cap - last) <= Self.tolerance {
+            steady += 1
+        } else {
+            steady = 0
+        }
+        last = cap
+        return steady >= Self.steadyReadings || now - began >= Self.timeout
+    }
+}

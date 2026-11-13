@@ -758,6 +758,131 @@ if case let .success(withAutomation) = Config.parse(Data(Config(dictionary: ["lo
     expect(false, "config: the automation options round-trip")
 }
 
+// A boost started from a dim screen waits for the panel to come up.
+do {
+    var settle = BacklightSettle()
+    var now = 0.0
+    var startedAt: Double?
+    var capAtStart = 0.0
+    // macOS takes the panel from 16 to 600 nits over 0.5 s, then holds.
+    for step in 0..<60 {
+        now = Double(step) * BacklightSettle.interval
+        let cap = min(600, 16 + (600 - 16) * now / 0.5)
+        if settle.ready(cap: cap, now: now) { startedAt = now; capAtStart = cap; break }
+    }
+    expect(capAtStart == 600 && (startedAt ?? 9) < 1, "settle: the boost starts only once the panel has reached standard white")
+    expect(PanelSupport.standardWhite(PanelReadings(hasBuiltInDisplay: true, potentialHeadroom: 16, peakNits: 1600, capNits: 16)) == nil, "settle: a dim panel's cap does not say what standard white is (why it waits)")
+    var steadyPanel = BacklightSettle()
+    var readings = 0
+    while !steadyPanel.ready(cap: 600, now: Double(readings) * BacklightSettle.interval) { readings += 1 }
+    expect(readings == BacklightSettle.steadyReadings, "settle: a steady panel waits a quarter second, no more")
+    var restless = BacklightSettle()
+    var gaveUp = false
+    for step in 0..<200 where !gaveUp {
+        gaveUp = restless.ready(cap: Double(100 + step * 3), now: Double(step) * BacklightSettle.interval)
+        if gaveUp { expect(abs(Double(step) * BacklightSettle.interval - BacklightSettle.timeout) < 0.001, "settle: gives up after the timeout") }
+    }
+    var unreadable = BacklightSettle()
+    expect(gaveUp && unreadable.ready(cap: nil, now: 0), "settle: an unreadable cap does not hold the boost back")
+}
+
+// dimShortcut: dim every display, and put each one back.
+do {
+    let b = DimAll.builtInKey
+    var dim = DimAll()
+    let first: [String: Double] = dim.press(current: [b: 80, "2": 60], dimLevel: 6.25)
+    expect(first == [b: 6.25, "2": 6.25] && dim.isDimmed, "dim all: one press takes every display to the dim level")
+    let second: [String: Double] = dim.press(current: [b: 6.25, "2": 6.25], dimLevel: 6.25)
+    expect(second == [b: 80, "2": 60] && !dim.isDimmed, "dim all: the next press puts each display back")
+
+    var boosted = DimAll()
+    _ = boosted.press(current: [b: 150], dimLevel: 6.25)
+    let back: [String: Double] = boosted.press(current: [b: 6.25], dimLevel: 6.25)
+    expect(back == [b: 150], "dim all: a boosted display comes back boosted")
+
+    var already = DimAll()
+    let nothing: [String: Double] = already.press(current: [b: 5, "2": 7], dimLevel: 6.25)
+    expect(nothing.isEmpty && !already.isDimmed, "dim all: a display already that dim is left alone")
+    let mixed: [String: Double] = already.press(current: [b: 3, "2": 40], dimLevel: 6.25)
+    expect(mixed == ["2": 6.25], "dim all: it never brightens a darker display")
+    let mixedBack: [String: Double] = already.press(current: [b: 3, "2": 6.25], dimLevel: 6.25)
+    expect(mixedBack == ["2": 40], "dim all: only what it dimmed is put back")
+
+    var drifted = DimAll()
+    _ = drifted.press(current: [b: 80], dimLevel: 6.25)
+    let afterDrift: [String: Double] = drifted.press(current: [b: 9], dimLevel: 6.25)
+    expect(afterDrift == [b: 80], "dim all: a small drift (auto-brightness) still restores")
+
+    var turnedUp = DimAll()
+    _ = turnedUp.press(current: [b: 80, "2": 60], dimLevel: 6.25)
+    let partly: [String: Double] = turnedUp.press(current: [b: 70, "2": 6.25], dimLevel: 6.25)
+    expect(partly == ["2": 60], "dim all: a display the user turned up since is not touched")
+
+    var movedOn = DimAll()
+    _ = movedOn.press(current: [b: 80], dimLevel: 6.25)
+    let again: [String: Double] = movedOn.press(current: [b: 70], dimLevel: 6.25)
+    expect(again == [b: 6.25] && movedOn.entries[b]?.before == 70, "dim all: with nothing still dim, the press dims again from today's level")
+
+    var unplugged = DimAll()
+    _ = unplugged.press(current: [b: 80, "2": 60], dimLevel: 6.25)
+    let builtInOnly: [String: Double] = unplugged.press(current: [b: 6.25], dimLevel: 6.25)
+    expect(builtInOnly == [b: 80] && !unplugged.isDimmed, "dim all: an unplugged display is skipped")
+
+    var floor = DimAll()
+    let clamped: [String: Double] = floor.press(current: ["2": 50, "3": 50], minimums: ["2": 20, "3": -90], dimLevel: 6.25)
+    expect(clamped == ["2": 20, "3": 6.25], "dim all: a display's own minimum is respected, extra dimming is not used")
+
+    var dark = DimAll()
+    let off: [String: Double] = dark.press(current: [b: 125, "2": 50, "3": 50], minimums: ["2": 0, "3": -90], dimLevel: 0)
+    expect(off == [b: 0, "2": 0, "3": -90], "dim all: level 0 takes every display as dark as it goes")
+    let on: [String: Double] = dark.press(current: [b: 0, "2": 0, "3": -90], dimLevel: 0)
+    expect(on == [b: 125, "2": 50, "3": 50], "dim all: and back from dark")
+
+    var failed = DimAll()
+    _ = failed.press(current: [b: 80, "2": 60], dimLevel: 6.25)
+    failed.forget(b)
+    let withoutFailed: [String: Double] = failed.press(current: [b: 80, "2": 6.25], dimLevel: 6.25)
+    expect(withoutFailed == ["2": 60], "dim all: a display that could not be written has nothing to put back")
+
+    var saved = DimAll()
+    _ = saved.press(current: [b: 150, "2": 60], dimLevel: 10)
+    var reloaded = DimAll(stored: saved.stored)
+    let afterRestart: [String: Double] = reloaded.press(current: [b: 10, "2": 10], dimLevel: 10)
+    expect(reloaded == DimAll() && afterRestart == [b: 150, "2": 60], "dim all: survives a restart between the two presses")
+    expect(!DimAll(stored: ["x": [1], "y": [Double.nan, 2]]).isDimmed, "dim all: bad stored values are dropped")
+
+    // Ten presses in a row write exactly two different levels, alternating: no third value to flicker through.
+    var rapid = DimAll()
+    var level = 120.0
+    var seen: [Double] = []
+    for _ in 0..<10 {
+        let step: [String: Double] = rapid.press(current: [b: level], dimLevel: 6.25)
+        level = step[b] ?? level
+        seen.append(level)
+    }
+    expect(seen == [6.25, 120, 6.25, 120, 6.25, 120, 6.25, 120, 6.25, 120], "dim all: repeated presses only ever alternate between the two levels")
+}
+expect(Config().dimShortcut == "ctrl+opt+cmd+b" && Config().dimLevel == 0, "config: dimShortcut is on by default")
+expect(Shortcut.parse(DimAll.defaultShortcut) != nil, "config: the default dim shortcut parses")
+expect(Config(dictionary: ["dimShortcut": false]).dimShortcut == nil && Config(dictionary: ["dimShortcut": false]).warnings.isEmpty, "config: dimShortcut false turns it off")
+expect(Config(dictionary: ["dimShortcut": "ctrl+opt+d"]).dimShortcut == "ctrl+opt+d", "config: dimShortcut can be another combination")
+expect(Config(dictionary: ["dimShortcut": "d"]).dimShortcut == DimAll.defaultShortcut && Config(dictionary: ["dimShortcut": "d"]).warnings.count == 1, "config: a bad dimShortcut is a warning and keeps the default")
+expect(Config(dictionary: ["dimLevel": 80]).dimLevel == 50 && Config(dictionary: ["dimLevel": -5]).dimLevel == 0, "config: dimLevel clamps to 0-50")
+do {
+    let existing = Config(dictionary: ["toggleShortcut": "ctrl+opt+cmd+b"])
+    expect(existing.toggleShortcut == "ctrl+opt+cmd+b" && existing.dimShortcut == nil && existing.warnings.isEmpty, "config: a toggleShortcut already on the default combination keeps it, silently")
+    let both = Config(dictionary: ["toggleShortcut": "Cmd+Opt+Ctrl+B", "dimShortcut": "ctrl+opt+cmd+b"])
+    expect(both.toggleShortcut != nil && both.dimShortcut == nil && both.warnings.count == 1, "config: the same combination written twice is a warning")
+    let apart = Config(dictionary: ["toggleShortcut": "ctrl+opt+cmd+t"])
+    expect(apart.toggleShortcut != nil && apart.dimShortcut == DimAll.defaultShortcut, "config: different combinations both work")
+}
+if case let .success(withDim) = Config.parse(Data(Config(dictionary: ["dimShortcut": false, "dimLevel": 12.5]).json.utf8)) {
+    expect(withDim.dimShortcut == nil && withDim.dimLevel == 12.5 && withDim.warnings.isEmpty, "config: the dim options round-trip")
+} else {
+    expect(false, "config: the dim options round-trip")
+}
+expect(Shortcut.menuKey("ctrl+opt+cmd+b") == "b" && Shortcut.menuKey("cmd+f5") == nil && Shortcut.menuKey("b") == nil, "shortcut: the menu shows single-character keys only")
+
 if failureCount > 0 {
     print("FAILED: \(failureCount) of \(checkCount) logic checks")
     exit(1)
