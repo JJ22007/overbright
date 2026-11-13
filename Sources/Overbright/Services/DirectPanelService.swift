@@ -14,9 +14,17 @@ import os
 ///
 /// Measured on a 14" MacBook Pro, macOS 27.2: writes are accepted and the
 /// backlight's power follows (6.8 W at 600 nits, 10.8 W at 800, 12.5 W at
-/// 1000). macOS rewrites both values whenever it adjusts the backlight itself
-/// (ambient light, a brightness change); `maintain()` follows macOS until its
-/// values settle, then puts the boost back. The panel's own thermal limit is left alone.
+/// 1000). The panel's own thermal limit is left alone.
+///
+/// macOS rewrites both values whenever it adjusts the backlight itself: with
+/// ambient light, and every time HDR content appears or leaves (a system
+/// banner on macOS 27 is HDR content with a headroom of 1.2; that happened
+/// 145 times in one working day). It writes a ramp, one step per frame for one
+/// to two seconds. `maintain()` follows that ramp step by step: each time it
+/// finds macOS's values it writes the boost again, computed from the cap macOS
+/// just set (`DirectPanel.backlight`). Waiting for macOS to settle first, as
+/// earlier versions did, left the screen at standard brightness for two to
+/// three seconds at each end of every HDR appearance.
 ///
 /// The values in place before the boost are kept in the defaults until they
 /// are written back, so a crash is undone at the next launch.
@@ -30,20 +38,30 @@ final class DirectPanelService {
     private let defaults = UserDefaults.standard
     private let logger = Logger(subsystem: AppInfo.bundleID, category: "Direct")
     private var framebuffer: io_registry_entry_t = 0
-    private var timer: Timer?
+    private var timer: DispatchSourceTimer?
 
-    /// Standard white in nits, from the cap macOS set before the boost (and
-    /// again whenever macOS changes it, for example with ambient light).
+    /// Standard white in nits: ordinary white without the boost.
     private(set) var standardNits: Double?
+    /// The cap macOS itself last set: standard white, times the headroom it
+    /// has opened for HDR content.
+    private(set) var systemCap: Double?
+    /// The backlight the boost wants now. Equal to `systemCap` while macOS's
+    /// own backlight is already as high as the boost may go (HDR video).
     private(set) var targetNits: Double?
+    /// How many times macOS took the backlight over and the boost was put back.
     private(set) var rewrites = 0
     /// `maxNits` from the config; `ceilingNits` bounds it by this panel's peak.
     var configuredCeiling: Double = DirectPanel.defaultCeiling
     var ceilingNits: Double { PanelSupport.ceiling(configured: configuredCeiling, peakNits: peakNits) }
+    /// The most the backlight itself is ever written, HDR headroom included.
+    private var hardCeiling: Double {
+        PanelSupport.ceiling(configured: DirectPanel.ceilingRange.upperBound, peakNits: peakNits)
+    }
     /// The panel's peak, read at `begin`; nothing is ever written above it.
     private var peakNits: Double?
     private var level: Float = 1
-    private var writtenCap: Double?
+    /// What the boost last wrote; nil while macOS's own values are left alone.
+    private var written: Double?
 
     var isActive: Bool { targetNits != nil }
 
@@ -59,15 +77,19 @@ final class DirectPanelService {
         if framebuffer == 0 { framebuffer = PanelLightService.findBuiltInFramebuffer() }
         guard framebuffer != 0,
               let cap = Self.read(framebuffer, "BLNitsCap"),
-              let current = Self.read(framebuffer, "IOMFBBrightnessLevel") else { return false }
+              Self.read(framebuffer, "IOMFBBrightnessLevel") != nil else { return false }
         if defaults.object(forKey: Key.savedCap) == nil {
             defaults.set(cap, forKey: Key.savedCap)
             defaults.synchronize()
         }
         peakNits = readings.peakNits
         standardNits = standard
+        systemCap = cap
+        written = nil
         rewrites = 0
-        guard apply(level: level) else {
+        self.level = level
+        // macOS may be in the middle of a ramp and write over the first try.
+        guard (0..<3).contains(where: { _ in apply(level: level) }) else {
             end()
             return false
         }
@@ -78,69 +100,108 @@ final class DirectPanelService {
     @discardableResult
     func apply(level newLevel: Float) -> Bool {
         level = newLevel
-        guard framebuffer != 0, let standardNits,
-              let target = DirectPanel.targetNits(standard: standardNits, level: level, ceiling: ceilingNits)
+        guard framebuffer != 0, let standardNits, let systemCap,
+              let target = DirectPanel.backlight(standard: standardNits, systemCap: systemCap, level: level,
+                                                 ceiling: ceilingNits, hardCeiling: hardCeiling)
         else { return false }
         targetNits = target
+        guard target > systemCap + 0.5 else {
+            // Nothing to add: macOS's own backlight stands. Hand it back if
+            // the boost's values are still on the panel.
+            defer { written = nil }
+            return written == nil || write(systemCap)
+        }
         return write(target)
     }
 
-    /// macOS's last values that differ from ours, and when they last changed.
-    private var systemCap: Double?
-    private var systemLevel: Double?
-    private var systemChangedAt: TimeInterval = 0
-
-    /// How long macOS's values must stay unchanged before the boost goes back.
-    /// macOS ramps the backlight in small steps over a second or more (ambient
-    /// light, automatic brightness); writing over every step made the screen
-    /// flicker between bright and dark. Following macOS until it settles turns
-    /// each adjustment into one short dip.
+    /// How long macOS's values must stay unchanged before its ramp counts as over.
     static let settleTime: TimeInterval = 1.0
+    /// How often the backlight is checked: while macOS is writing a ramp (it
+    /// writes once per frame, every 8 ms at 120 Hz), and otherwise.
+    static let followInterval: TimeInterval = 0.002
+    static let idleInterval: TimeInterval = 0.02
 
-    /// Puts the boost back after macOS rewrote the backlight, once macOS has
-    /// settled. A backlight below standard white means the user dimmed the
-    /// display; that is left for the controller, which ends the boost.
+    private var lastCap: Double?
+    private var lastLevel: Double?
+    private var changedAt: TimeInterval = 0
+    private var following = false
+
+    /// Puts the boost back whenever macOS has written the backlight, at once
+    /// and from the cap macOS just set, so the screen keeps its brightness
+    /// through macOS's ramps. A backlight below what macOS allows means the
+    /// user dimmed the display; that is left for the controller, which ends
+    /// the boost.
     func maintain() {
-        guard framebuffer != 0, let target = targetNits,
+        guard framebuffer != 0, targetNits != nil,
               let cap = Self.read(framebuffer, "BLNitsCap"),
               let current = Self.read(framebuffer, "IOMFBBrightnessLevel") else { return }
-        let ours = abs(current - target) <= 2 && abs(cap - (writtenCap ?? target)) <= 2
-        guard !ours else {
-            systemCap = nil
-            systemLevel = nil
-            return
-        }
         let now = ProcessInfo.processInfo.systemUptime
-        if systemCap.map({ abs($0 - cap) > 0.5 }) ?? true || systemLevel.map({ abs($0 - current) > 0.5 }) ?? true {
+        if lastCap != cap || lastLevel != current {
+            lastCap = cap
+            lastLevel = current
+            changedAt = now
+        }
+        let capIsOurs = written.map { abs(cap - $0) <= 0.02 } ?? false
+        let levelIsOurs = written.map { abs(current - $0) <= 0.02 } ?? false
+        if !capIsOurs, systemCap.map({ abs($0 - cap) > 0.02 }) ?? true {
             systemCap = cap
-            systemLevel = current
-            systemChangedAt = now
-            return
         }
-        guard now - systemChangedAt >= Self.settleTime else { return }
-        let decision = DirectPanel.settled(cap: cap, level: current, writtenCap: writtenCap,
-                                           standard: standardNits, ceiling: ceilingNits, peak: peakNits)
-        guard decision.reapply else { return }
-        if let newStandard = decision.newStandard {
-            standardNits = newStandard
-            logger.notice("standard white now \(newStandard, privacy: .public) nits")
+        let quiet = now - changedAt >= Self.settleTime
+        if following, quiet {
+            // macOS's ramp is over: its headroom can be trusted now.
+            following = false
+            countedTakeover = false
+            setPace(Self.idleInterval)
+            if updateStandard() {
+                apply(level: level)
+                return
+            }
+        } else if !following, !quiet {
+            following = true
+            setPace(Self.followInterval)
         }
+        if capIsOurs, levelIsOurs { return }
+        if !levelIsOurs, let systemCap, let standardNits,
+           DirectPanel.dimmed(level: current, systemCap: systemCap, standard: standardNits) { return }
         apply(level: level)
-        rewrites += 1
-        systemCap = nil
-        systemLevel = nil
+        // Counted once per takeover, not once per step of macOS's ramp.
+        if written != nil, !countedTakeover {
+            countedTakeover = true
+            rewrites += 1
+        }
+    }
+
+    private var countedTakeover = false
+
+    /// Reads standard white again once macOS's ramp is over. True if it changed.
+    private func updateStandard() -> Bool {
+        guard let systemCap, let previous = standardNits else { return false }
+        let next = DirectPanel.standard(previous: previous, systemCap: systemCap,
+                                        headroom: PanelLightService.edrHeadroom(),
+                                        ceiling: ceilingNits, peak: peakNits)
+        guard abs(next - previous) >= 0.5 else { return false }
+        standardNits = next
+        logger.notice("standard white now \(next, privacy: .public) nits")
+        return true
     }
 
     /// Writes back the values from before the boost.
     func end() {
-        timer?.invalidate()
+        timer?.cancel()
         timer = nil
         if framebuffer == 0 { framebuffer = PanelLightService.findBuiltInFramebuffer() }
-        if framebuffer != 0 { _ = Self.restoreSaved(framebuffer, defaults: defaults) }
+        if framebuffer != 0 {
+            _ = Self.restoreSaved(framebuffer, defaults: defaults, systemCap: systemCap, untouched: written == nil && isActive)
+        }
         targetNits = nil
-        writtenCap = nil
+        written = nil
         standardNits = nil
+        systemCap = nil
         peakNits = nil
+        following = false
+        countedTakeover = false
+        lastCap = nil
+        lastLevel = nil
     }
 
     /// After a crash: writes back values a boost left behind.
@@ -150,15 +211,29 @@ final class DirectPanelService {
         let entry = PanelLightService.findBuiltInFramebuffer()
         guard entry != 0 else { return }
         defer { IOObjectRelease(entry) }
-        _ = restoreSaved(entry, defaults: defaults)
+        _ = restoreSaved(entry, defaults: defaults, systemCap: nil, untouched: false)
     }
 
-    private static func restoreSaved(_ entry: io_registry_entry_t, defaults: UserDefaults) -> Bool {
+    /// `systemCap` is the cap macOS itself last set, when a running boost
+    /// knows it: with HDR content on screen that is what macOS expects to
+    /// find, not standard white. `untouched` means the boost never wrote over
+    /// macOS's values, so there is nothing to put back.
+    private static func restoreSaved(_ entry: io_registry_entry_t, defaults: UserDefaults,
+                                     systemCap: Double?, untouched: Bool) -> Bool {
         guard defaults.object(forKey: Key.savedCap) != nil else { return true }
+        func forget() {
+            defaults.removeObject(forKey: Key.savedCap)
+            defaults.removeObject(forKey: Key.savedLevel)
+            defaults.synchronize()
+        }
+        if untouched {
+            forget()
+            return true
+        }
         let peak = PanelLightService.nits(entry, "limit_max_physical_brightness")
         guard let values = DirectPanel.restore(
             savedCap: defaults.object(forKey: Key.savedCap) as? Double,
-            systemStandard: PanelLightService.systemStandardNits(),
+            systemStandard: systemCap ?? PanelLightService.systemStandardNits(),
             currentLevel: read(entry, "IOMFBBrightnessLevel"),
             peak: peak
         ) else { return false }
@@ -166,11 +241,7 @@ final class DirectPanelService {
         let limit = max(peak ?? 0, values.cap)
         let ok = (values.level.map { set(entry, "IOMFBBrightnessLevel", $0, limit: limit) } ?? true)
             && set(entry, "BLNitsCap", values.cap, limit: limit)
-        if ok {
-            defaults.removeObject(forKey: Key.savedCap)
-            defaults.removeObject(forKey: Key.savedLevel)
-            defaults.synchronize()
-        }
+        if ok { forget() }
         return ok
     }
 
@@ -186,17 +257,24 @@ final class DirectPanelService {
             logger.notice("BLNitsCap write of \(nits, privacy: .public) not taken")
             return false
         }
-        writtenCap = nits
+        written = nits
         return true
     }
 
     private func startTimer() {
-        timer?.invalidate()
-        let next = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+        timer?.cancel()
+        let next = DispatchSource.makeTimerSource(flags: .strict, queue: .main)
+        next.setEventHandler { [weak self] in
             MainActor.assumeIsolated { self?.maintain() }
         }
-        RunLoop.main.add(next, forMode: .common)
         timer = next
+        following = false
+        setPace(Self.idleInterval)
+        next.resume()
+    }
+
+    private func setPace(_ interval: TimeInterval) {
+        timer?.schedule(deadline: .now() + interval, repeating: interval, leeway: .nanoseconds(0))
     }
 
     private static func read(_ entry: io_registry_entry_t, _ key: String) -> Double? {

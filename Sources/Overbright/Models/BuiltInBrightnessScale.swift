@@ -125,15 +125,54 @@ enum DirectPanel {
         return level > 1.05 ? min(Float(level), BoostLevel.absoluteMaximum) : nil
     }
 
-    /// What to do once macOS has replaced the boost and its values have
-    /// settled. A new cap at full backlight is macOS choosing a new standard
-    /// white (ambient light, up or down): follow it and put the boost back.
-    /// A backlight below standard white is the user dimming: leave it to the
-    /// controller. The new standard is decided before that comparison, so a
-    /// darker room (720 to 600 nits) is not mistaken for dimming.
-    struct Settled: Equatable {
-        var reapply: Bool
-        var newStandard: Double?
+    /// The backlight to write, given the cap macOS itself last set.
+    ///
+    /// While HDR content is on screen macOS raises its cap to standard white
+    /// times a headroom and draws ordinary content that much darker, so
+    /// ordinary white is the backlight divided by the headroom. (Measured on a
+    /// 14" MacBook Pro, 27.2.1: with HDR open to the peak, a backlight written
+    /// to 996 nits drew 5.7 W, less than the 6.8 W of standard white.) To keep
+    /// ordinary white where the user set it, the backlight is therefore the
+    /// wanted white times that headroom.
+    ///
+    /// `ceiling` bounds ordinary white; `hardCeiling` bounds the backlight
+    /// itself. When macOS's own cap is already as high as that allows (HDR
+    /// video), the answer is macOS's cap: nothing to add, and writing less
+    /// would make the screen darker than without the boost.
+    static func backlight(standard: Double, systemCap: Double, level: Float,
+                          ceiling: Double, hardCeiling: Double) -> Double? {
+        guard let white = targetNits(standard: standard, level: level, ceiling: ceiling),
+              systemCap.isFinite, systemCap > 50, hardCeiling.isFinite else { return nil }
+        let headroom = max(systemCap / standard, 1)
+        return max(min(white * headroom, hardCeiling), systemCap)
+    }
+
+    /// Standard white once macOS has stopped changing its cap, now `systemCap`.
+    /// (During its ramp the cap and the headroom both move, and nothing is
+    /// decided: the backlight follows the cap in proportion meanwhile.)
+    ///
+    /// A cap with no HDR headroom is standard white itself (macOS moves it
+    /// with ambient light). A cap with headroom is standard white times that
+    /// headroom. Without a headroom reading, a cap under the ceiling and well
+    /// under the peak counts as standard white, as it did before the headroom
+    /// was read.
+    static func standard(previous: Double, systemCap: Double, headroom: Double?,
+                         ceiling: Double, peak: Double?) -> Double {
+        let edrCap = (peak ?? .infinity) * PanelSupport.edrCapShare
+        guard systemCap.isFinite, systemCap > 50 else { return previous }
+        guard let headroom, headroom.isFinite, headroom > 0 else {
+            return systemCap < ceiling && systemCap < edrCap ? systemCap : previous
+        }
+        if headroom <= 1.02 { return systemCap < edrCap ? systemCap : previous }
+        let standard = systemCap / headroom
+        return standard > 50 ? standard : previous
+    }
+
+    /// Whether macOS is driving the backlight below what it allows: the user
+    /// (or macOS) dimmed the display. That is left to the controller, which
+    /// ends the boost; nothing is written over it.
+    static func dimmed(level: Double, systemCap: Double, standard: Double) -> Bool {
+        level < min(systemCap, standard) * 0.95
     }
 
     /// What to write when the boost ends (or after a crash). The cap goes back
@@ -154,19 +193,6 @@ enum DirectPanel {
         guard let standard = believable(systemStandard) ?? believable(savedCap) else { return nil }
         guard let currentLevel, currentLevel.isFinite, currentLevel > standard + 1 else { return (standard, nil) }
         return (standard, standard)
-    }
-
-    static func settled(cap: Double, level: Double, writtenCap: Double?, standard: Double?,
-                        ceiling: Double, peak: Double?) -> Settled {
-        var effectiveStandard = standard ?? 0
-        var newStandard: Double?
-        if let writtenCap, abs(cap - writtenCap) > 1, cap > 50, cap < ceiling,
-           cap < (peak ?? .infinity) * PanelSupport.edrCapShare {
-            newStandard = cap
-            effectiveStandard = cap
-        }
-        guard level >= effectiveStandard * 0.95 else { return Settled(reapply: false, newStandard: nil) }
-        return Settled(reapply: true, newStandard: newStandard)
     }
 }
 

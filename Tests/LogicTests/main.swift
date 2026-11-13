@@ -529,19 +529,53 @@ expect(PanelSupport.methods(configured: .classic, major: 27, minor: 2) == [.clas
 expect(Config().configuredBoostMethod == nil, "auto is no configured method")
 expect(parsed(#"{"boostMethod": "overlay"}"#).configuredBoostMethod == .overlay, "a named method is configured")
 
-// Direct method: what to do once macOS's own values have settled.
-let darker = DirectPanel.settled(cap: 600, level: 600, writtenCap: 943, standard: 720, ceiling: 1000, peak: 1600)
-expect(darker == .init(reapply: true, newStandard: 600), "a darker room (720 to 600) is followed, not taken for dimming")
-let brighter = DirectPanel.settled(cap: 720, level: 720, writtenCap: 786, standard: 600, ceiling: 1000, peak: 1600)
-expect(brighter == .init(reapply: true, newStandard: 720), "a brighter room (600 to 720) is followed")
-let dimmed = DirectPanel.settled(cap: 786, level: 400, writtenCap: 786, standard: 600, ceiling: 1000, peak: 1600)
-expect(!dimmed.reapply, "a backlight below standard white is left to the controller")
-let dimmedNewCap = DirectPanel.settled(cap: 600, level: 300, writtenCap: 943, standard: 720, ceiling: 1000, peak: 1600)
-expect(!dimmedNewCap.reapply, "dimming under a new cap is still dimming")
-let sameCap = DirectPanel.settled(cap: 786, level: 600, writtenCap: 786, standard: 600, ceiling: 1000, peak: 1600)
-expect(sameCap == .init(reapply: true, newStandard: nil), "macOS rewrote the level only: put the boost back")
-let hdrCap = DirectPanel.settled(cap: 1600, level: 1600, writtenCap: 786, standard: 600, ceiling: 1000, peak: 1600)
-expect(hdrCap.newStandard == nil, "an HDR cap at the peak is not a new standard white")
+// Direct method: the backlight to write, from the cap macOS itself last set.
+func backlight(_ standard: Double, cap: Double, _ level: Float, ceiling: Double = 1000) -> Double? {
+    DirectPanel.backlight(standard: standard, systemCap: cap, level: level, ceiling: ceiling, hardCeiling: 1296)
+}
+expect(backlight(600, cap: 600, 1.25) == 750, "no HDR: the backlight is the wanted white")
+expect(backlight(600, cap: 600, 1.66)! > 995 && backlight(600, cap: 600, 1.66)! <= 1000, "no HDR: the top stays under the ceiling")
+expect(abs(backlight(600, cap: 720, 1.25)! - 900) < 0.01, "a banner's headroom of 1.2: the backlight is the white times 1.2")
+expect(abs(backlight(600, cap: 720, 1.66)! - 996 * 1.2) < 0.5, "a banner at the top of the scale: white keeps its 996 nits")
+expect(backlight(600, cap: 720, 1.66)! <= 1296, "HDR headroom never takes the backlight past the hard ceiling")
+expect(backlight(600, cap: 900, 1.66) == 1296, "a headroom of 1.5: the backlight stops at the hard ceiling")
+expect(backlight(600, cap: 1600, 1.66) == 1600, "HDR video at the peak: macOS's own backlight stands")
+expect(backlight(600, cap: 1300, 1.25) == 1300, "macOS's cap above the hard ceiling is never lowered")
+expect(backlight(600, cap: 610, 1.25)! > 750 && backlight(600, cap: 610, 1.25)! < 765, "the first steps of macOS's ramp move the backlight smoothly")
+expect(backlight(500, cap: 500, 2.0) == 1000 && backlight(500, cap: 600, 2.0) == 1200, "a 500-nit panel: the same rule")
+expect(backlight(600, cap: 720, 1.66, ceiling: 800)! == 960, "the ceiling bounds ordinary white, and the headroom is added to it")
+expect(backlight(600, cap: 40, 1.25) == nil && backlight(40, cap: 600, 1.25) == nil, "nonsense readings give nothing to write")
+for cap in stride(from: 600.0, through: 1600, by: 7) {
+    let nits = backlight(600, cap: cap, 1.66)!
+    if nits < cap || nits > max(1296, cap) { expect(false, "backlight \(nits) out of bounds at cap \(cap)") }
+}
+
+// Direct method: standard white once macOS has stopped changing its cap.
+func standardAfter(_ cap: Double, headroom: Double?, previous: Double = 600) -> Double {
+    DirectPanel.standard(previous: previous, systemCap: cap, headroom: headroom, ceiling: 1000, peak: 1600)
+}
+expect(standardAfter(720, headroom: 1.2) == 600, "a banner's cap of 720 with its headroom of 1.2 is still 600")
+expect(standardAfter(720, headroom: 1.0) == 720, "a cap with no headroom is a new standard white (brighter room)")
+expect(standardAfter(600, headroom: 1.0, previous: 720) == 600, "and a darker room is followed down")
+expect(abs(standardAfter(1600, headroom: 2.0) - 800) < 0.01, "at the peak with a headroom of 2, standard white is 800")
+expect(abs(standardAfter(1600, headroom: 2.667) - 600) < 0.2, "HDR video at the peak leaves standard white at 600")
+expect(standardAfter(1600, headroom: 1.0) == 600, "a cap at the peak is never standard white")
+expect(standardAfter(720, headroom: nil) == 720, "without a headroom reading, a cap under the ceiling counts as before")
+expect(standardAfter(1600, headroom: nil) == 600, "without a headroom reading, a cap at the peak does not")
+expect(standardAfter(30, headroom: 1.0) == 600, "a nonsense cap changes nothing")
+
+// Direct method: macOS driving the backlight below its own cap is the user dimming.
+expect(DirectPanel.dimmed(level: 400, systemCap: 600, standard: 600), "400 nits under a 600 cap is dimming")
+expect(DirectPanel.dimmed(level: 300, systemCap: 720, standard: 600), "dimming under a banner's cap is still dimming")
+expect(!DirectPanel.dimmed(level: 600, systemCap: 720, standard: 600), "the first step of a banner's ramp is not dimming")
+expect(!DirectPanel.dimmed(level: 590, systemCap: 600, standard: 600), "a level a little behind the cap is not dimming")
+expect(!DirectPanel.dimmed(level: 1000, systemCap: 1600, standard: 600), "the level behind a fast ramp to the peak is not dimming")
+
+// Standard white at the start of a boost, with HDR content already on screen.
+expect(PanelSupport.standardWhite(PanelReadings(hasBuiltInDisplay: true, potentialHeadroom: 16, peakNits: 1600, capNits: 720, systemStandardNits: 600, edrHeadroom: 1.2)) == 600, "a banner on screen at the start: standard white is 600, not 720")
+expect(PanelSupport.standardWhite(PanelReadings(hasBuiltInDisplay: true, potentialHeadroom: 16, peakNits: 1600, capNits: 720, systemStandardNits: 720, edrHeadroom: 1.0)) == 720, "a bright room at the start: standard white is 720")
+expect(PanelSupport.standardWhite(PanelReadings(hasBuiltInDisplay: true, potentialHeadroom: 16, peakNits: 1600, capNits: 1600, systemStandardNits: 600, edrHeadroom: 2.0)) == 800, "the headroom is preferred to the luminance reading when both are there")
+expect(PanelSupport.standardWhite(PanelReadings(hasBuiltInDisplay: true, potentialHeadroom: 16, peakNits: 1600, capNits: 720, systemStandardNits: 600)) == 720, "without a headroom reading the cap stands, as before")
 
 // Readback: what an agent is told after a command.
 expect(Readback.judge(boosted: true, method: "direct", targetNits: 900, panelNits: 898, capNits: 900) == .reached, "readback: boost at the target is reached")

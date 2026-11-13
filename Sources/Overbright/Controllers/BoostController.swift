@@ -54,6 +54,7 @@ final class BoostController {
         [
             "standardNits": direct.standardNits.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
             "targetNits": direct.targetNits.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
+            "systemCapNits": direct.systemCap.map { ($0 * 10).rounded() / 10 } ?? NSNull(),
             "ceilingNits": direct.ceilingNits,
             "rewrites": direct.rewrites,
         ]
@@ -660,9 +661,10 @@ final class BoostController {
         integrityTimer = timer
     }
 
-    /// The direct method's top follows standard white, which macOS raises in
-    /// bright surroundings (600 to 720 nits measured): 166% or 138% under a
-    /// 1000-nit ceiling.
+    /// The direct method's top follows standard white, which macOS can raise
+    /// in bright surroundings: 166% at 600 nits under a 1000-nit ceiling, less
+    /// above. (The 720 nits once taken for a bright room was a system
+    /// banner's HDR headroom; `DirectPanelService` now tells the two apart.)
     private func refreshDirectMaximum() {
         guard effectiveMethod == .direct else { return }
         let before = BoostLevel.maximum

@@ -7,6 +7,14 @@ Download **Overbright-universal.zip**, unzip it, and move **Overbright.app** int
 - Not notarized by Apple. If the first launch is blocked, choose **Open Anyway** under System Settings → Privacy & Security. You do not need to turn Gatekeeper off.
 - To use F1/F2 past 100%, allow Overbright under Privacy & Security → Accessibility.
 
+## Next
+
+- **Fixed: the screen dimmed for a few seconds whenever HDR content appeared or left (`direct`).** On macOS 27 a system banner is HDR content, so this could happen many times an hour: 145 times in one working day on the Mac it was found on. macOS takes the backlight over with a ramp of one to two seconds, and Overbright waited for it to settle before putting the boost back. It now puts the boost back after every step of the ramp. Measured with the backlight's own readings: the backlight was at macOS's value for 89 ms in total (3 ms at the longest), where it had been 2 to 3 seconds each time.
+- **Fixed: with HDR content on screen the boost was too dim, and with HDR video it was darker than no boost.** macOS draws ordinary content darker by the HDR headroom, and Overbright did not allow for it: it took a banner's raised cap for a brighter room. It now reads the headroom and raises the backlight by that factor, so ordinary white stays where you set it. `maxNits` still bounds ordinary white; the backlight itself never goes above 81% of the panel's peak. Where that is not enough (HDR video at the peak), macOS's own backlight stands and the screen is at standard brightness, not below it.
+- The top of the scale no longer drops to 138% while a banner is on screen.
+- `status --json` → `direct` gains `systemCapNits`, the cap macOS itself last set.
+- While a boost is on, the backlight is checked 50 times a second (4 before), and every 2 ms while macOS is ramping.
+
 ## 2.6.2
 
 - **Fixed: after a boost ended, the screen could stay dim at about 160 nits** while standard white was 600. Overbright saved a backlight level caught while macOS was still ramping and wrote it back at the end, then saved it again on the next boost. Ending a boost now goes back to the standard white macOS reports, and only lowers a backlight that is still above it.
