@@ -14,6 +14,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var toggleItem = NSMenuItem()
     private var statusTextItem = NSMenuItem()
     private var brightnessKeysItem = NSMenuItem()
+    private var dimItem = NSMenuItem()
+    /// The press behind `dimShortcut`; the menu item does the same.
+    var dimHandler: (() -> Void)?
+    var isDimmed = false {
+        didSet { renderDimItem() }
+    }
     private var presetItems: [(item: NSMenuItem, preset: Preset)] = []
     private var percentageLabel = NSTextField(labelWithString: "")
     private var slider = NSSlider()
@@ -88,6 +94,22 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         )
         restoreItem.target = self
         menu.addItem(restoreItem)
+
+        dimItem = NSMenuItem(title: "", action: #selector(toggleDim), keyEquivalent: "")
+        dimItem.target = self
+        if let text = config.dimShortcut, let key = Shortcut.menuKey(text),
+           let shortcut = Shortcut.parse(text) {
+            // Shown for reference; the global shortcut is what answers it.
+            dimItem.keyEquivalent = key
+            var flags: NSEvent.ModifierFlags = []
+            if shortcut.modifiers & Shortcut.command != 0 { flags.insert(.command) }
+            if shortcut.modifiers & Shortcut.shift != 0 { flags.insert(.shift) }
+            if shortcut.modifiers & Shortcut.option != 0 { flags.insert(.option) }
+            if shortcut.modifiers & Shortcut.control != 0 { flags.insert(.control) }
+            dimItem.keyEquivalentModifierMask = flags
+        }
+        renderDimItem()
+        menu.addItem(dimItem)
 
         brightnessKeysItem = NSMenuItem(
             title: "", action: #selector(requestBrightnessKeyAccess), keyEquivalent: ""
@@ -326,6 +348,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             brightnessKeysItem.title = L10n.tr("Retry F1 / F2", "重试 F1 / F2")
             brightnessKeysItem.state = .off
         }
+    }
+
+    private func renderDimItem() {
+        dimItem.title = isDimmed
+            ? L10n.tr("Restore All Displays", "恢复所有显示器的亮度")
+            : L10n.tr("Dim All Displays", "调暗所有显示器")
+    }
+
+    @objc private func toggleDim() {
+        dimHandler?()
     }
 
     @objc private func toggleBoost() {

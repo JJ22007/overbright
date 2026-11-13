@@ -58,6 +58,11 @@ struct Config: Equatable {
     /// A global shortcut that switches the boost, such as "ctrl+opt+cmd+b".
     /// nil (the default) registers none.
     var toggleShortcut: String? = nil
+    /// A global shortcut that dims every display and, pressed again, puts
+    /// them back. nil (`false` in the file) registers none. See `DimAll`.
+    var dimShortcut: String? = DimAll.defaultShortcut
+    /// How far that shortcut dims, in percent.
+    var dimLevel: Double = DimAll.defaultLevel
     var presets: [Preset] = []
 
     /// Problems found while decoding. Each one names the entry at fault.
@@ -68,7 +73,7 @@ struct Config: Equatable {
         "enableOnLaunch", "showPercentage", "language", "presets",
         "externalDisplays", "externalKeys", "showHUD", "extraDimming", "boostMethod", "maxNits",
         "holdHeadroom",
-        "lowBatteryOff", "toggleShortcut"
+        "lowBatteryOff", "toggleShortcut", "dimShortcut", "dimLevel"
     ]
 
     enum ParseError: Error, Equatable {
@@ -142,6 +147,24 @@ struct Config: Equatable {
             } else {
                 warnings.append("\"toggleShortcut\" must look like \"ctrl+opt+cmd+b\" (a letter, digit, F-key or space with Command, Control or Option); using none")
             }
+        }
+        if let raw = dictionary["dimShortcut"] {
+            if raw is NSNull || (Self.isBoolean(raw) && (raw as? Bool) == false) {
+                dimShortcut = nil
+            } else if let text = raw as? String, Shortcut.parse(text) != nil {
+                dimShortcut = text
+            } else {
+                warnings.append("\"dimShortcut\" must look like \"ctrl+opt+cmd+b\" (a letter, digit, F-key or space with Command, Control or Option) or be false; using \"\(DimAll.defaultShortcut)\"")
+            }
+        }
+        dimLevel = number("dimLevel", in: dictionary, range: DimAll.levelRange, default: dimLevel)
+        // One combination cannot do both. The one written in the file wins
+        // over the default; with both written, dimming gives way.
+        if let toggle = toggleShortcut.flatMap(Shortcut.parse), toggle == dimShortcut.flatMap(Shortcut.parse) {
+            if dictionary["dimShortcut"] != nil {
+                warnings.append("\"dimShortcut\" is the same combination as \"toggleShortcut\"; dimming has no shortcut")
+            }
+            dimShortcut = nil
         }
 
         if let raw = dictionary["language"] {
@@ -218,6 +241,8 @@ struct Config: Equatable {
           "holdHeadroom": \(holdHeadroom),
           "lowBatteryOff": \(lowBatteryOff.map(format) ?? "false"),
           "toggleShortcut": \(toggleShortcut.map(quote) ?? "false"),
+          "dimShortcut": \(dimShortcut.map(quote) ?? "false"),
+          "dimLevel": \(format(dimLevel)),
           "presets": \(presetBlock)
         }
 

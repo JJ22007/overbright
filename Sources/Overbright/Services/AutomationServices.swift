@@ -47,8 +47,16 @@ final class BatteryMonitor {
 }
 
 /// One global shortcut, through Carbon hot keys (no Accessibility needed).
+/// Each service has its own `id`, so several can be registered at once.
 @MainActor
 final class ShortcutService {
+    private static let signature = OSType(0x4F42_5254) // "OBRT"
+    private let id: UInt32
+
+    init(id: UInt32 = 1) {
+        self.id = id
+    }
+
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private var registered: Shortcut?
@@ -65,8 +73,8 @@ final class ShortcutService {
         guard let shortcut else { return true }
         installHandler()
         var ref: EventHotKeyRef?
-        let id = EventHotKeyID(signature: OSType(0x4F42_5254), id: 1) // "OBRT"
-        let status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, id,
+        let hotKeyID = EventHotKeyID(signature: Self.signature, id: id)
+        let status = RegisterEventHotKey(shortcut.keyCode, shortcut.modifiers, hotKeyID,
                                          GetApplicationEventTarget(), 0, &ref)
         guard status == noErr, let ref else { return false }
         hotKey = ref
@@ -74,13 +82,25 @@ final class ShortcutService {
         return true
     }
 
+    private func owns(_ hotKeyID: EventHotKeyID) -> Bool {
+        hotKeyID.signature == Self.signature && hotKeyID.id == id
+    }
+
     private func installHandler() {
         guard handler == nil else { return }
         var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let context = Unmanaged.passUnretained(self).toOpaque()
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, context in
-            guard let context else { return noErr }
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
+            guard let context, let event else { return OSStatus(eventNotHandledErr) }
+            var pressed = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &pressed
+            )
             let service = Unmanaged<ShortcutService>.fromOpaque(context).takeUnretainedValue()
+            // Another service's hot key: pass it on to that service's handler.
+            let mine = MainActor.assumeIsolated { service.owns(pressed) }
+            guard status == noErr, mine else { return OSStatus(eventNotHandledErr) }
             MainActor.assumeIsolated { service.onPress?() }
             return noErr
         }, 1, &type, context, &handler)

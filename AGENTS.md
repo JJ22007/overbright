@@ -89,7 +89,7 @@ All sources are in `Sources/Overbright/`.
 | `Models/BrightnessMediaKeyEvent.swift` | Decoding the system brightness-key events |
 | `Models/BacklightObservation.swift` | Tolerating brief backlight read failures |
 | `Models/DDC.swift` | DDC/CI request and reply bytes; `ExternalBrightness` steps and scaling |
-| `Models/Automation.swift` | `LowBattery` (when `lowBatteryOff` ends the boost) and `Shortcut` (parsing `toggleShortcut`) |
+| `Models/Automation.swift` | `LowBattery` (when `lowBatteryOff` ends the boost) `Shortcut` (parsing `toggleShortcut` and `dimShortcut`) and `DimAll` (what one press of `dimShortcut` writes to each display, and what the next press puts back) |
 | `Models/AgentInterface.swift` | `Readback` (does the panel prove the boost or the restore) and `MCPServer` (`overbright mcp`: JSON-RPC over stdio, four tools, each runs a command and polls the readback) |
 | `Models/ColorProfileIdentity.swift` | Telling a real color-profile change from a transient notification |
 | `Controllers/BoostController.swift` | The state machine: enable, disable, suspend/resume, recovery |
