@@ -838,6 +838,34 @@ do {
     let on: [String: Double] = dark.press(current: [b: 0, "2": 0, "3": -90], dimLevel: 0)
     expect(on == [b: 125, "2": 50, "3": 50], "dim all: and back from dark")
 
+    // Blackout: an external display's lowest level still shows 10% of the picture.
+    var black = DimAll()
+    _ = black.press(current: [b: 125, "2": 100, "3": 100], minimums: ["2": 10, "3": -90], dimLevel: 0)
+    expect(black.blackout(current: [b: 0, "2": 10, "3": -90], dimLevel: 0) == ["2", "3"],
+           "dim all: level 0 blacks out every external display it dimmed, never the built-in one")
+    expect(black.blackout(current: [b: 0, "2": 16.25, "3": -90], dimLevel: 0) == ["3"],
+           "dim all: a display the user turned up since is not blacked out")
+    expect(black.blackout(current: [b: 0, "3": -90], dimLevel: 0) == ["3"],
+           "dim all: an unplugged display is not blacked out")
+    expect(black.blackout(current: [b: 0, "2": 10, "3": -90], dimLevel: 6.25).isEmpty,
+           "dim all: a dim level above 0 keeps the picture")
+    let restored = DimAll(stored: black.stored)
+    expect(restored.blackout(current: ["2": 10, "3": -90], dimLevel: 0) == ["2", "3"],
+           "dim all: the blackout comes back after a restart between the two presses")
+    expect(restored.lostExtraDimming(current: [b: 0, "2": 10, "3": 0]) == ["3": -90],
+           "dim all: extra dimming the restart lost (backlight reads 0) is written again")
+    expect(restored.lostExtraDimming(current: ["2": 10, "3": -90]).isEmpty,
+           "dim all: nothing to write again while the extra dimming is still there")
+    expect(restored.lostExtraDimming(current: ["3": 40]).isEmpty,
+           "dim all: a display turned up since is left alone")
+    _ = black.press(current: [b: 0, "2": 10, "3": -90], dimLevel: 0)
+    expect(black.blackout(current: [b: 125, "2": 100, "3": 100], dimLevel: 0).isEmpty,
+           "dim all: the next press ends the blackout")
+    var keptPicture = DimAll()
+    _ = keptPicture.press(current: ["2": 5], minimums: ["2": 10], dimLevel: 0)
+    expect(keptPicture.blackout(current: ["2": 5], dimLevel: 0).isEmpty,
+           "dim all: a display the press did not dim is not blacked out")
+
     var failed = DimAll()
     _ = failed.press(current: [b: 80, "2": 60], dimLevel: 6.25)
     failed.forget(b)

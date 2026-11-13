@@ -52,7 +52,8 @@ enum DDC {
 /// mirror image of the built-in display's boost above 100%.
 enum ExternalBrightness {
     /// Software dimming never goes fully black: below this the screen is unusable
-    /// and the user could not see the menu to bring it back.
+    /// and the user could not see the menu to bring it back. The one exception
+    /// is `dimShortcut`, whose next press brings it back (`DimAll.blackout`).
     static let softwareMinimum: Double = 10
     /// Lowest level with extra dimming: backlight 0 and the picture at 10%.
     static let extraDimMinimum: Double = -90

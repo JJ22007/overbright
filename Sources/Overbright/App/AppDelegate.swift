@@ -72,10 +72,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.statusController = statusController
         statusController.dimHandler = { [weak self] in self?.toggleDimAll() }
         statusController.isDimmed = dimAll.isDimmed
-        externalDisplays.onListChange = { [weak statusController] in
+        externalDisplays.onListChange = { [weak self, weak statusController] in
+            self?.restoreLostExtraDimming()
+            self?.syncBlackout()
             statusController?.rebuildMenu()
         }
-        externalDisplays.onLevelChange = { [weak statusController] display in
+        externalDisplays.onLevelChange = { [weak self, weak statusController] display in
+            self?.syncBlackout()
             statusController?.renderExternal(display)
         }
         externalDisplays.displaysDidChange()
@@ -139,6 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         boostController?.configuredMethod = ConfigStore.shared.config.configuredBoostMethod
         externalDisplays?.isEnabled = ConfigStore.shared.config.externalDisplays
         externalDisplays?.extraDimming = ConfigStore.shared.config.extraDimming
+        syncBlackout()
         boostController?.capDidChange()
         brightnessKeyService?.isEnabled = ConfigStore.shared.config.brightnessKeys
         brightnessKeyService?.start()
@@ -204,7 +208,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         UserDefaults.standard.set(dimAll.stored, forKey: DefaultsKey.dimAll)
         statusController?.isDimmed = dimAll.isDimmed
+        syncBlackout()
         return written
+    }
+
+    /// After a restart between the two presses, puts back the extra dimming
+    /// the gamma table lost (see `DimAll.lostExtraDimming`).
+    private func restoreLostExtraDimming() {
+        guard let externalDisplays, dimAll.isDimmed else { return }
+        var current: [String: Double] = [:]
+        for display in externalDisplays.displays {
+            current[String(display.id)] = display.level
+        }
+        for (key, level) in dimAll.lostExtraDimming(current: current) {
+            if let id = CGDirectDisplayID(key) { externalDisplays.setLevel(level, for: id) }
+        }
+    }
+
+    /// Blacks out the external displays the dim left at their lowest level,
+    /// and gives back the rest. Also runs when displays come and go (after a
+    /// restart between the two presses) and when a level changes (a display
+    /// the user turned up is theirs again).
+    private func syncBlackout() {
+        guard let externalDisplays else { return }
+        var current: [String: Double] = [:]
+        for display in externalDisplays.displays {
+            current[String(display.id)] = display.level
+        }
+        let keys = dimAll.blackout(current: current, dimLevel: ConfigStore.shared.config.dimLevel)
+        externalDisplays.blackout = Set(keys.compactMap { CGDirectDisplayID($0) })
     }
 
     private func batteryDidChange(_ reading: LowBattery.Reading) {

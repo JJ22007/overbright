@@ -143,6 +143,34 @@ struct DimAll: Equatable {
         return dim
     }
 
+    /// The external displays to black out now. An external display's lowest
+    /// level still shows the picture (at 10%), so with `dimLevel` 0 ("as dark
+    /// as it goes") a dimmed external display also gets a black picture. Only
+    /// while it is still at the level the press left it: one the user has
+    /// turned up since is theirs, and shows what they set.
+    func blackout(current: [String: Double], dimLevel: Double) -> Set<String> {
+        guard dimLevel <= 0 else { return [] }
+        var keys: Set<String> = []
+        for (key, entry) in entries where key != Self.builtInKey {
+            guard let level = current[key], level <= entry.dimmed + Self.tolerance else { continue }
+            keys.insert(key)
+        }
+        return keys
+    }
+
+    /// Extra dimming (below 0) lives in the gamma table, which does not
+    /// survive a restart: a display the press left at −90 reads 0 afterwards,
+    /// its backlight still at the bottom. These are the levels to write again
+    /// so that it is where the press left it (and gets its blackout back).
+    func lostExtraDimming(current: [String: Double]) -> [String: Double] {
+        var levels: [String: Double] = [:]
+        for (key, entry) in entries where key != Self.builtInKey && entry.dimmed < 0 {
+            guard let level = current[key], abs(level) <= Self.tolerance else { continue }
+            levels[key] = entry.dimmed
+        }
+        return levels
+    }
+
     /// The display could not be written to, so there is nothing to put back.
     mutating func forget(_ key: String) {
         entries[key] = nil
