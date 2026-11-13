@@ -50,7 +50,7 @@
 | MacBook Air、13 英寸 MacBook Pro、Intel MacBook Pro | | **不支持。** 没有 XDR 面板。菜单里会写明，不会对屏幕写入任何东西。 |
 | 外接显示器、合盖 | | **不增亮。** 外接显示器保持自己的 0–100% 亮度。 |
 
-"应该能用"的意思是：这些代码路径用各型号的读数写了测试（`Tests/LogicTests`），并没有人真的看过屏幕。如果你有这些机型，不管能不能用，都请把增亮开到刻度最高，运行 `overbright report`，把输出贴进[机型报告](https://github.com/JJ22007/overbright/issues/new?template=model-report.md)。这份报告读取面板数字并核对增亮有没有真的写进面板，不会改动屏幕。
+"应该能用"的意思是：这些代码路径用各型号的读数写了测试（`Tests/LogicTests`），并没有人真的看过屏幕。如果你有这些机型，不管能不能用，都请用[机型报告表单](https://github.com/JJ22007/overbright/issues/new?template=model-report.yml)告诉我：把增亮开到刻度最高，运行 `overbright report`，把输出贴进去。这份报告读取面板数字并核对增亮有没有真的写进面板，不会改动屏幕。其他问题请提[问题报告](https://github.com/JJ22007/overbright/issues/new?template=bug-report.yml)。
 
 各型号不一样的数字都来自面板本身。读不到或者看起来不对的时候，Overbright 会退回到更保守的做法，而不是去猜：
 
@@ -253,6 +253,18 @@ overbright status --json
 - `unknown`：没有读数。
 
 `set_brightness` 和 `restore` 只有在回读证明成功时才不算错误。这些工具不加任何新的显示行为，每个都只是运行对应的命令。`status --json` 里也有同样的 `readback` 对象。
+
+### 和 Knobs、Paneful 一起用
+
+[Knobs](https://github.com/JJ22007/knobs) 用来切换 macOS 设置，[Paneful](https://github.com/JJ22007/paneful) 用来摆放窗口，都是同一个作者做的。一个 Knobs 场景可以同时做三件事：改系统设置、用 Overbright 设亮度、摆好窗口。之后一次 `knobs undo` 就能从同一份快照把这些全部还原，亮度也包括在内。
+
+```bash
+knobs scene present --dry-run    # 先看会改什么，包括亮度
+knobs scene present              # 切换：设置、130% 亮度、窗口
+knobs undo                       # 全部还原
+```
+
+Knobs 通过 `overbright mcp` 控制 Overbright，并核对面板回读，不会去改 Overbright 的文件。它会在 `~/.local/bin/overbright`（`scripts/install.sh` 链接到这里）、`/opt/homebrew/bin` 和 `/usr/local/bin` 里找这个命令。如果你是下载安装的，先建个链接：`ln -s /Applications/Overbright.app/Contents/MacOS/Overbright ~/.local/bin/overbright`。没装 Overbright 时，场景会跳过亮度这一步并在结果里说明。怎么写自己的场景，见 [Knobs README 的场景一节](https://github.com/JJ22007/knobs/blob/main/README.zh-CN.md#场景设置和其他工具一起切换)。
 
 ## 做一个属于你自己的
 

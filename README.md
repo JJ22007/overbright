@@ -54,7 +54,7 @@ Every 14" and 16" MacBook Pro with a Liquid Retina XDR display, M1 Pro/Max (2021
 | MacBook Air, 13" MacBook Pro, Intel MacBook Pro | | **Not supported.** No XDR panel. The menu says so, and nothing is written to the display. |
 | External displays, lid closed | | **No boost.** External displays keep their own 0–100% brightness. |
 
-"Expected to work" means the code paths are covered by tests with each model's readings (`Tests/LogicTests`), not that anyone has looked at the screen. If you have one of these Macs, please turn the boost on at the top of the scale, run `overbright report` and paste its output into [a model report](https://github.com/JJ22007/overbright/issues/new?template=model-report.md), whether it works or not. The report reads your panel and checks that the boost reached it; it changes nothing.
+"Expected to work" means the code paths are covered by tests with each model's readings (`Tests/LogicTests`), not that anyone has looked at the screen. If you have one of these Macs, please tell me whether it works, yes or no, with [the model report form](https://github.com/JJ22007/overbright/issues/new?template=model-report.yml): turn the boost on at the top of the scale, run `overbright report` and paste its output. The report reads your panel and checks that the boost reached it; it changes nothing. Other problems go in [a bug report](https://github.com/JJ22007/overbright/issues/new?template=bug-report.yml).
 
 Every number that differs between models comes from the panel. If anything is missing or looks wrong, Overbright falls back instead of guessing:
 
@@ -270,6 +270,18 @@ Every result carries the panel's readback, so an agent gets proof and not just "
 - `unknown`: no reading.
 
 `set_brightness` and `restore` are errors unless the readback proves them. The tools add no display behaviour: each runs the matching command. `status --json` has the same `readback` object.
+
+### With Knobs and Paneful
+
+[Knobs](https://github.com/JJ22007/knobs) switches macOS settings, and [Paneful](https://github.com/JJ22007/paneful) arranges windows; both are by the same author. A Knobs scene can do all three at once: change the settings, set Overbright's brightness and lay out the windows. `knobs undo` then puts all of it back from one snapshot, brightness included.
+
+```bash
+knobs scene present --dry-run    # what would change, brightness included
+knobs scene present              # settings, 130% brightness, windows
+knobs undo                       # everything back
+```
+
+Knobs drives Overbright through `overbright mcp` and checks the readback; it never writes Overbright's files. It looks for the command at `~/.local/bin/overbright` (where `scripts/install.sh` links it), `/opt/homebrew/bin` or `/usr/local/bin`. If you installed from the download, link it first: `ln -s /Applications/Overbright.app/Contents/MacOS/Overbright ~/.local/bin/overbright`. Without Overbright, a scene skips the brightness step and says so. How to write your own scene: [Scenes in the Knobs README](https://github.com/JJ22007/knobs#scenes-settings-and-other-tools-together).
 
 ## Build your own
 
